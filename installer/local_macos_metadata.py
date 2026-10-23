@@ -1,7 +1,6 @@
 """Use this Mac's AOSKit through a bounded subprocess; never use a server."""
 import base64
 from datetime import datetime, timezone
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -31,14 +30,16 @@ class LocalMacMetadata:
                     raise ValueError('Invalid metadata')
             for key in ('otp', 'machine'):
                 base64.b64decode(data[key], validate=True)
-            identifier = str(uuid.UUID(data['identifier'])).upper()
+            uuid.UUID(data['identifier'])  # Validate without rewriting the native identity.
+            identifier = data['identifier']
             if '<macOS;' not in data['client'] or 'Windows' in data['client'] or 'Darwin/' not in data['user_agent']:
                 raise ValueError('Unexpected platform')
             return {
                 'X-MMe-Client-Info': data['client'],
                 'User-Agent': data['user_agent'],
                 'X-Mme-Device-Id': identifier,
-                'X-Apple-I-MD-LU': base64.b64encode(hashlib.sha256(identifier.encode()).hexdigest().upper().encode()).decode(),
+                # Native AOSKit uses the identifier bytes, not the v3 server hash.
+                'X-Apple-I-MD-LU': base64.b64encode(identifier.encode('utf-8')).decode(),
                 'X-Apple-I-MD': data['otp'], 'X-Apple-I-MD-M': data['machine'],
                 'X-Apple-I-MD-RINFO': '17106176',
                 'X-Apple-I-Client-Time': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),

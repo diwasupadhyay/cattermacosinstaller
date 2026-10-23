@@ -261,7 +261,11 @@ class InstallerService:
         def run():
             self.require_access()
             from ipaside_engine import gsa
-            self.emit('Signing in directly to Apple. First-time device authentication can take a few minutes...')
+            if sys.platform == 'darwin':
+                method = 'the remote Mac provider you approved' if self.remote_metadata_enabled else "this Mac's local authentication service"
+                self.emit('Signing in directly to Apple using ' + method + '. First-time authentication can take a few minutes...')
+            else:
+                self.emit('Signing in directly to Apple. First-time device authentication can take a few minutes...')
             try:
                 self.session_vault.forget()
                 self.saved_session_expiry = None
@@ -315,8 +319,12 @@ class InstallerService:
                 eligible = isinstance(error, LocalMetadataError) or (
                     isinstance(error, AuthenticationStageError) and any(code in str(error) for code in ('-80045', '-80046', '-23782')))
                 if sys.platform in ('win32', 'darwin') and eligible and not self.remote_metadata_enabled:
+                    # These exception types contain only fixed stages and numeric codes.
+                    # Keep the native failure visible even when fallback is accepted.
+                    local_failure = str(error).replace(password, '[redacted]')
+                    self.emit(local_failure)
                     if self.ask_phone_step('Try macOS authentication metadata?',
-                        'Local Apple authentication could not finish. An optional remote Mac metadata provider may help.\n\n'
+                        local_failure + '\n\nAn optional remote Mac metadata provider may help.\n\n'
                         'mac-ani.jkcoxson.com receives a random device identifier, provisioning blobs and your IP address. '
                         'Your Apple email, password, verification code, account token and signing key are never sent to it. '
                         'Apple may list this sign-in as a Mac device in your account. Closing setup clears in-memory data; an optionally saved session remains encrypted until expiry or Sign out. This does not remove that Apple Account entry. '
@@ -325,7 +333,7 @@ class InstallerService:
                         from remote_anisette import enable
                         self.mac_metadata = enable(gsa, consent=True)
                         self.remote_metadata_enabled = True
-                        raise RuntimeError('macOS metadata enabled for this setup session. Sign in again with your verified email. No sign-in has been confirmed yet.') from None
+                        raise RuntimeError(local_failure + '\n\nRemote Mac metadata is now enabled for this setup session. Sign in again with your verified email. No sign-in has been confirmed yet.') from None
                 # Never echo the password even if an upstream error includes it.
                 raise RuntimeError(str(error).replace(password, '[redacted]')) from None
             finally:

@@ -1,6 +1,5 @@
 // Native metadata only. No account credentials, network client, or remote fallback.
 #import <Foundation/Foundation.h>
-#import <IOKit/IOKitLib.h>
 #import <objc/message.h>
 #include <sys/sysctl.h>
 
@@ -23,10 +22,11 @@ int main(void) {
             id otp = headers[@"X-Apple-MD"], machine = headers[@"X-Apple-MD-M"];
             if (![otp isKindOfClass:[NSString class]] || ![otp length] ||
                 ![machine isKindOfClass:[NSString class]] || ![machine length]) return 3;
-            io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"));
-            if (!service) return 4;
-            NSString *identifier = CFBridgingRelease(IORegistryEntryCreateCFProperty(service, CFSTR("IOPlatformUUID"), kCFAllocatorDefault, 0));
-            IOObjectRelease(service);
+            // Use the identity supplied by the same framework as the OTP.
+            // An IORegistry UUID and a hash are not a substitute for this pair.
+            SEL identitySelector = NSSelectorFromString(@"machineUDID");
+            if (![utilities respondsToSelector:identitySelector]) return 4;
+            id identifier = ((id (*)(id, SEL))objc_msgSend)(utilities, identitySelector);
             NSString *model = systemValue("hw.model"), *build = systemValue("kern.osversion");
             if (![identifier isKindOfClass:[NSString class]] || ![[NSUUID alloc] initWithUUIDString:identifier] || !model || !build) return 4;
             NSOperatingSystemVersion version = NSProcessInfo.processInfo.operatingSystemVersion;

@@ -1,4 +1,5 @@
 import json
+import base64
 from pathlib import Path
 import subprocess
 import sys
@@ -23,9 +24,18 @@ class LocalMacTests(unittest.TestCase):
         with patch('local_macos_metadata.sys.platform', 'darwin'), patch.dict('os.environ', {'IPASIDE_APPLE_PASSWORD': 'secret'}), patch('local_macos_metadata.subprocess.run', return_value=self.reply()) as run:
             headers = LocalMacMetadata().headers()
         self.assertEqual(headers['X-Mme-Device-Id'], '12345678-1234-1234-1234-123456789012')
+        self.assertEqual(base64.b64decode(headers['X-Apple-I-MD-LU']).decode(),
+                         '12345678-1234-1234-1234-123456789012')
         self.assertNotIn('IPASIDE_APPLE_PASSWORD', run.call_args.kwargs['env'])
         self.assertEqual(len(run.call_args.args[0]), 1)
         self.assertEqual(run.call_args.kwargs['timeout'], 20)
+
+    def test_native_identity_bytes_are_preserved_as_a_pair(self):
+        identity = 'abcdef12-abcd-abcd-abcd-abcdef123456'
+        with patch('local_macos_metadata.sys.platform', 'darwin'), patch('local_macos_metadata.subprocess.run', return_value=self.reply(identifier=identity)):
+            headers = LocalMacMetadata().headers()
+        self.assertEqual(headers['X-Mme-Device-Id'], identity)
+        self.assertEqual(base64.b64decode(headers['X-Apple-I-MD-LU']).decode(), identity)
 
     def test_native_failure_is_redacted_and_does_not_fall_back(self):
         with patch('local_macos_metadata.sys.platform', 'darwin'), patch('local_macos_metadata.subprocess.run', side_effect=subprocess.CalledProcessError(3, 'helper', stderr=b'private-metadata')):
