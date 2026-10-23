@@ -85,6 +85,33 @@ class LocalMacTests(unittest.TestCase):
                     enable(SimpleNamespace(), consent=consent)
                 request.assert_not_called()
         gsa = SimpleNamespace(anisette=SimpleNamespace())
-        with patch('remote_anisette.sys.platform', 'darwin'), patch('remote_anisette.request', return_value=b'{"client_info":"<Mac> <macOS;15>","user_agent":"akd/test"}'):
+        with patch('local_macos_metadata.LocalMacMetadata.client_info', return_value={'client_info': '<Mac> <macOS;27.0>', 'user_agent': 'akd/1.0 Darwin/26'}), patch('remote_anisette.sys.platform', 'darwin'), patch('remote_anisette.request', return_value=b'{"client_info":"<Mac> <macOS;15>","user_agent":"akd/test"}'):
             provider = enable(gsa, consent=True)
         self.assertIs(gsa.anisette.get_headers.__self__, provider)
+
+    def test_host_description_does_not_request_otp(self):
+        with patch('local_macos_metadata.sys.platform', 'darwin'), patch('local_macos_metadata.subprocess.run', return_value=self.reply()) as run:
+            info = LocalMacMetadata().client_info()
+        self.assertEqual(run.call_args.args[0][-1], '--client-info')
+        self.assertEqual(set(info), {'client_info', 'user_agent'})
+        self.assertNotIn('identifier', info)
+
+    def test_remote_uses_host_description_without_replacing_provisioning_identity(self):
+        from remote_anisette import enable
+        old = b'{"client_info":"<MacBookPro13,3> <Mac OS X;10.12.6;16G29>","user_agent":"old"}'
+        host = {'client_info': '<Mac17,3> <macOS;27.0;26A> <com.apple.AuthKit/1 (com.apple.akd/1.0)>', 'user_agent': 'akd/1.0 Darwin/26'}
+        gsa = SimpleNamespace(anisette=SimpleNamespace())
+        with patch('remote_anisette.sys.platform', 'darwin'), patch('remote_anisette.request', return_value=old), patch('local_macos_metadata.LocalMacMetadata.client_info', return_value=host):
+            provider = enable(gsa, consent=True)
+        identifier = provider.identifier
+        headers = provider._base()
+        self.assertEqual(headers['X-MMe-Client-Info'], host['client_info'])
+        self.assertEqual(gsa._GS_USER_AGENT, host['user_agent'])
+        self.assertEqual(headers['X-Mme-Device-Id'], str(identifier).upper())
+        self.assertIsNone(provider.blob)
+
+    def test_host_description_rejects_injected_headers(self):
+        with patch('local_macos_metadata.sys.platform', 'darwin'), patch('local_macos_metadata.subprocess.run', return_value=self.reply(client='private\r\nInjected: value')):
+            with self.assertRaisesRegex(RuntimeError, 'M11') as caught:
+                LocalMacMetadata().client_info()
+        self.assertNotIn('private', str(caught.exception))

@@ -2,6 +2,7 @@
 #import <Foundation/Foundation.h>
 #import <objc/message.h>
 #include <sys/sysctl.h>
+#include <string.h>
 
 static NSString *systemValue(const char *key) {
     char value[256] = {0}; size_t size = sizeof(value);
@@ -9,9 +10,23 @@ static NSString *systemValue(const char *key) {
     return [NSString stringWithUTF8String:value];
 }
 
-int main(void) {
+int main(int argc, const char *argv[]) {
     @autoreleasepool {
         @try {
+            NSString *model = systemValue("hw.model"), *build = systemValue("kern.osversion");
+            if (!model || !build) return 4;
+            NSOperatingSystemVersion version = NSProcessInfo.processInfo.operatingSystemVersion;
+            NSString *client = [NSString stringWithFormat:@"<%@> <macOS;%ld.%ld.%ld;%@> <com.apple.AuthKit/1 (com.apple.akd/1.0)>", model, (long)version.majorVersion, (long)version.minorVersion, (long)version.patchVersion, build];
+            NSString *kernel = systemValue("kern.osrelease");
+            if (!kernel) return 4;
+            NSString *agent = [NSString stringWithFormat:@"akd/1.0 Darwin/%@", kernel];
+            if (argc == 2 && strcmp(argv[1], "--client-info") == 0) {
+                // Public host description only. No AOSKit, OTP or device identity.
+                NSData *data = [NSJSONSerialization dataWithJSONObject:@{@"client":client, @"user_agent":agent} options:0 error:nil];
+                if (!data) return 5;
+                return fwrite(data.bytes, 1, data.length, stdout) == data.length ? 0 : 5;
+            }
+            if (argc != 1) return 2;
             NSBundle *bundle = [NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/AOSKit.framework"];
             if (![bundle load]) return 2;
             Class utilities = NSClassFromString(@"AOSUtilities");
@@ -27,13 +42,7 @@ int main(void) {
             SEL identitySelector = NSSelectorFromString(@"machineUDID");
             if (![utilities respondsToSelector:identitySelector]) return 4;
             id identifier = ((id (*)(id, SEL))objc_msgSend)(utilities, identitySelector);
-            NSString *model = systemValue("hw.model"), *build = systemValue("kern.osversion");
-            if (![identifier isKindOfClass:[NSString class]] || ![[NSUUID alloc] initWithUUIDString:identifier] || !model || !build) return 4;
-            NSOperatingSystemVersion version = NSProcessInfo.processInfo.operatingSystemVersion;
-            NSString *client = [NSString stringWithFormat:@"<%@> <macOS;%ld.%ld.%ld;%@> <com.apple.AuthKit/1 (com.apple.akd/1.0)>", model, (long)version.majorVersion, (long)version.minorVersion, (long)version.patchVersion, build];
-            NSString *kernel = systemValue("kern.osrelease");
-            if (!kernel) return 4;
-            NSString *agent = [NSString stringWithFormat:@"akd/1.0 Darwin/%@", kernel];
+            if (![identifier isKindOfClass:[NSString class]] || ![[NSUUID alloc] initWithUUIDString:identifier]) return 4;
             NSDictionary *result = @{@"otp":otp, @"machine":machine, @"identifier":identifier, @"client":client, @"user_agent":agent};
             NSData *data = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
             if (!data || data.length > 65536) return 5;

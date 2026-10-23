@@ -131,6 +131,11 @@ def enable(gsa, *, consent=False):
     provider.info = json.loads(request(ORIGIN + '/v3/client_info'))
     if 'Mac' not in value(provider.info, 'client_info'):
         raise RuntimeError('Expected a macOS metadata provider.')
+    if sys.platform == 'darwin':
+        # Server currently describes macOS 10.12.6, rejected by some accounts.
+        # Host description is independent of the provider's provisioned UUID/blob.
+        from local_macos_metadata import LocalMacMetadata
+        provider.info.update(LocalMacMetadata().client_info())
     agent = value(provider.info, 'user_agent')
     # Keep one provider for login AND provisioning; never mix device identities.
     gsa.anisette.get_headers = provider.headers

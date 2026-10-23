@@ -17,6 +17,11 @@ assert (root / 'remote_anisette.py').is_file()
 from local_macos_metadata import enable
 provider = enable(gsa)
 assert callable(gsa.anisette.get_headers)
+# Exercise the compiled host-description path even on runners without AOSKit OTP.
+info = provider.client_info()
+assert '<macOS;' in info['client_info'] and 'Darwin/' in info['user_agent']
+assert set(info) == {'client_info', 'user_agent'}
+print('Native host description passed without requesting authentication metadata.')
 with tempfile.TemporaryDirectory() as private:
     environment = dict(os.environ, LOCALAPPDATA=private)
     result = subprocess.run([str(root / 'runtime/bin/python3'), '-B', '-E', '-X', 'utf8', str(root / 'backend.py')],

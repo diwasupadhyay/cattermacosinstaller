@@ -14,6 +14,29 @@ class LocalMetadataError(RuntimeError):
 
 
 class LocalMacMetadata:
+    def client_info(self):
+        """Describe the host without requesting restricted authentication data."""
+        if sys.platform != 'darwin':
+            raise RuntimeError('Native Mac client information requires macOS.')
+        helper = Path(__file__).resolve().parent / 'native' / 'catter-local-metadata'
+        try:
+            environment = {key: value for key, value in os.environ.items()
+                           if not key.startswith(('IPASIDE_', 'DYLD_'))}
+            result = subprocess.run([str(helper), '--client-info'], capture_output=True,
+                                    timeout=20, check=True, env=environment)
+            if len(result.stdout) > 65536:
+                raise ValueError('Oversized response')
+            data = json.loads(result.stdout)
+            for key in ('client', 'user_agent'):
+                item = data.get(key)
+                if not isinstance(item, str) or not item or len(item) > 4096 or not item.isascii() or '\r' in item or '\n' in item:
+                    raise ValueError('Invalid host description')
+            if '<macOS;' not in data['client'] or 'Windows' in data['client'] or 'Darwin/' not in data['user_agent']:
+                raise ValueError('Unexpected platform')
+            return {'client_info': data['client'], 'user_agent': data['user_agent']}
+        except Exception:
+            raise RuntimeError('M11: Could not read this Mac model and OS version. Restart the updated installer. No Apple sign-in was attempted.') from None
+
     def headers(self):
         if sys.platform != 'darwin':
             raise RuntimeError('Native Mac authentication is available only on macOS.')
