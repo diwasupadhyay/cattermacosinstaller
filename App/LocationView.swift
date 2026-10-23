@@ -13,6 +13,8 @@ struct LocationView: View {
     @Binding var selectedPlace: SavedPlace?
     var openPlaces: () -> Void
     var openSettings: () -> Void
+    @State private var showDetails = false
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var savePlace = false
     @State private var placeName = ""
     @State private var selectedName = "Pinned location"
@@ -31,43 +33,81 @@ struct LocationView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    connectionCard
-                    if let failure = model.failure {
-                        DisclosureGroup {
-                            Text(failure).font(.caption).foregroundStyle(.red).textSelection(.enabled)
-                        } label: {
-                            Label("Operation failed - view details", systemImage: "exclamationmark.triangle")
-                                .font(.subheadline).foregroundStyle(.red)
+            GeometryReader { geometry in
+                map
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        VStack(spacing: 10) {
+                            searchField
+                            TimelineView(.periodic(from: .now, by: 1)) { _ in compactStatus }
+                            if let searchError { Text(searchError).font(.caption).foregroundStyle(.red).padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10)) }
+                            if !results.isEmpty {
+                                ScrollView { searchResults }
+                                    .frame(maxHeight: geometry.size.height * 0.3)
+                            }
+                        }.padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 12)
+                    }
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        VStack(spacing: 0) {
+                            Capsule().fill(.secondary.opacity(0.35)).frame(width: 36, height: 4).padding(.top, 10)
+                                .accessibilityHidden(true)
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    if model.awaitingRestoreReading || model.realLocationReceived || model.canConfirmRestored {
+                                        restoreCard
+                                    } else {
+                                        selectionCard
+                                    }
+                                    if let error = library.error { Text(error).font(.caption).foregroundStyle(.red) }
+                                }.padding(.horizontal, 16).padding(.top, 10)
+                            }.frame(maxHeight: typeSize.isAccessibilitySize ? geometry.size.height * 0.4 : 180)
+                                .scrollDismissesKeyboard(.interactively)
+                            actions
                         }
+                        .background(.regularMaterial, in: UnevenRoundedRectangle(topLeadingRadius: 24, topTrailingRadius: 24))
                     }
-                    HStack {
-                        Text("Choose a location").font(.headline)
-                        Spacer()
-                        Button { searchFocused = false; openPlaces() } label: {
-                            Label("Your places", systemImage: "bookmark")
-                        }.font(.subheadline).padding(.vertical, 8)
-                    }
-                    searchField
-                    if let searchError { Text(searchError).foregroundStyle(.red).font(.caption) }
-                    if !results.isEmpty { searchResults }
-                    map
-                    selectionCard
-                    if let error = library.error { Text(error).font(.caption).foregroundStyle(.red) }
-                    if model.awaitingRestoreReading || model.realLocationReceived || model.canConfirmRestored { restoreCard }
-                }.padding(20)
             }
             .background(CatterTheme.background)
-            .scrollDismissesKeyboard(.interactively)
-            .safeAreaInset(edge: .bottom, spacing: 0) { actions }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) { CatterWordmark() }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { searchFocused = false; openPlaces() } label: { Image(systemName: "bookmark") }
+                        .accessibilityLabel("Saved and recent places")
+                }
                 ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Done") { searchFocused = false } }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { searchFocused = false; openSettings() } label: { Image(systemName: "slider.horizontal.3") }
                         .accessibilityLabel("Settings and setup")
+                }
+            }
+            .sheet(isPresented: $showDetails) {
+                NavigationStack {
+                    List {
+                        Section("Location session") {
+                            Text(model.statusTitle).font(.headline)
+                            Text(model.status)
+                            if let sent = model.lastSent {
+                                LabeledContent("Last sent", value: String(format: "%.5f, %.5f", sent.latitude, sent.longitude))
+                            }
+                            if let date = model.lastCommandAt { LabeledContent("Last command", value: date.formatted(date: .omitted, time: .standard)) }
+                        }
+                        Section("Background updates") {
+                            Text(monitor.message)
+                            Text("Keep LocalDevVPN connected. iOS can pause background execution; a successful command confirms the connection at that time.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        if let failure = model.failure {
+                            Section("Technical details") { Text(failure).font(.caption).textSelection(.enabled) }
+                        }
+                        Section {
+                            if model.failure != nil && model.pairingAvailable {
+                                Button("Reconnect") { Task { await model.connect() } }.disabled(model.busy)
+                            }
+                            Button("Connection settings") { showDetails = false; openSettings() }
+                        }
+                    }
+                    .navigationTitle("Session details").navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showDetails = false } } }
                 }
             }
             .alert("Save place", isPresented: $savePlace) {
@@ -229,28 +269,34 @@ struct LocationView: View {
             .background(.ultraThinMaterial)
     }
 
-    private var connectionCard: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: model.failure != nil || model.sessionNeedsCheck ? "exclamationmark.circle" : model.connected ? "checkmark.circle" : "circle.dotted")
-                .foregroundStyle(model.failure != nil || model.sessionNeedsCheck ? Color.orange : CatterTheme.accent)
-                .font(.title3).padding(.top, 2)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(model.statusTitle).font(.subheadline.weight(.semibold)).accessibilityIdentifier("sessionStatus")
-                Text(model.status).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                if let date = model.lastCommandAt {
-                    Text("Last command " + date.formatted(date: .omitted, time: .standard))
-                        .font(.caption2).foregroundStyle(.secondary)
+    private var compactStatus: some View {
+        Button { searchFocused = false; showDetails = true } label: {
+            HStack(spacing: 10) {
+                Image(systemName: statusSymbol).foregroundStyle(statusColor)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(model.statusTitle).font(.subheadline.weight(.semibold))
+                    Text(model.refreshing ? (model.backgroundUpdatesAllowed ? "Background monitoring on" : "Background monitoring off") : "Tap for session details")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-            }
-            Spacer(minLength: 0)
-            if (model.busy && !model.refreshing) || model.awaitingRestoreReading { ProgressView().accessibilityLabel(model.restoring ? "Stopping simulation" : "Checking location") }
-            if model.pairingAvailable && model.failure != nil && !model.busy {
-                Button("Reconnect") { Task { await model.connect() } }.font(.subheadline)
-            }
-            if !model.pairingAvailable {
-                Button(model.pairingAvailable ? "Help" : "Set up") { openSettings() }.font(.subheadline)
-            }
-        }.padding(16).background(CatterTheme.surface, in: RoundedRectangle(cornerRadius: CatterTheme.cornerRadius))
+                Spacer(minLength: 4)
+                if model.restoring || model.awaitingRestoreReading || (model.busy && !model.refreshing) { ProgressView() }
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        }.buttonStyle(.plain).accessibilityHint("Show connection status and troubleshooting details")
+    }
+
+    private var statusSymbol: String {
+        if model.failure != nil || model.sessionNeedsCheck { return "exclamationmark.circle.fill" }
+        if model.realLocationReceived { return "checkmark.circle.fill" }
+        if model.refreshing { return model.refreshIsRecent ? "location.fill" : "clock" }
+        return "location.circle"
+    }
+
+    private var statusColor: Color {
+        if model.failure != nil || model.sessionNeedsCheck { return .orange }
+        if model.realLocationReceived || (model.refreshing && model.refreshIsRecent) { return .green }
+        return CatterTheme.accent
     }
 
     private var map: some View {
@@ -266,7 +312,7 @@ struct LocationView: View {
             .onTapGesture { point in
                 if let coordinate = proxy.convert(point, from: .local) { choose(coordinate, recenter: false) }
             }
-        }.frame(height: 320).clipShape(RoundedRectangle(cornerRadius: CatterTheme.cornerRadius))
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func choose(_ location: CLLocationCoordinate2D, recenter: Bool = true, name: String = "Pinned location") {
@@ -276,6 +322,7 @@ struct LocationView: View {
         searchError = nil
         searchFocused = false
         model.select(coordinate)
+        model.dismissRestoreResult()
         selectedName = name
         if recenter { camera = .region(.init(center: location, span: .init(latitudeDelta: 0.025, longitudeDelta: 0.025))) }
     }

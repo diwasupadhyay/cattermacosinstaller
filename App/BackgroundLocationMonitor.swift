@@ -80,7 +80,10 @@ final class BackgroundLocationMonitor: NSObject, ObservableObject, CLLocationMan
     func setSessionActive(_ value: Bool) {
         // A repeated "inactive" notification (such as opening Maps after
         // Restore) must not silently cancel the pending real-location check.
-        guard sessionActive != value else { return }
+        guard sessionActive != value else {
+            if value { update() }
+            return
+        }
         verification?.cancel()
         verification = nil
         sampleRequestedAt = nil

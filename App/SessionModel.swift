@@ -30,9 +30,15 @@ final class SessionModel: ObservableObject {
     private var loop: Task<Void, Never>?
     private var generation = 0
     private var foreground = true
+    private var lastSuccessfulUpdateUptime: TimeInterval?
     private var maySendUpdates: Bool { foreground || backgroundUpdatesAllowed }
     var canConfirmRestored: Bool { unresolved && !busy && !refreshing && lastSent == nil }
     var selected: Coordinate? { try? Coordinate(latitude: latitude, longitude: longitude) }
+
+    var refreshIsRecent: Bool {
+        guard let lastSuccessfulUpdateUptime else { return false }
+        return ProcessInfo.processInfo.systemUptime - lastSuccessfulUpdateUptime < 15
+    }
 
     init() {
         let previous = UserDefaults.standard.bool(forKey: "simulationUnresolved")
@@ -43,6 +49,12 @@ final class SessionModel: ObservableObject {
     func select(_ coordinate: Coordinate) {
         latitude = String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), coordinate.latitude)
         longitude = String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), coordinate.longitude)
+    }
+
+    func dismissRestoreResult() {
+        guard !unresolved, !awaitingRestoreReading else { return }
+        realLocationReceived = false
+        status = "Ready to choose a location"
     }
 
     private func markUnresolved(_ value: Bool) {
@@ -71,7 +83,7 @@ final class SessionModel: ObservableObject {
         if failure != nil { return connected ? "Action needed" : "Connection interrupted" }
         if realLocationReceived { return "Real location received" }
         if sessionNeedsCheck { return "Connection needs checking" }
-        if refreshing { return "Simulation active" }
+        if refreshing { return refreshIsRecent ? "Simulating" : "Waiting for connection" }
         if unresolved { return "Location needs verification" }
         return connected ? "Ready to set location" : "Ready"
     }
@@ -174,6 +186,7 @@ final class SessionModel: ObservableObject {
             markUnresolved(true)
             try await sendWithRecovery(coordinate, token: token)
             lastCommandAt = Date()
+            lastSuccessfulUpdateUptime = ProcessInfo.processInfo.systemUptime
             locationSent?(coordinate)
             lastSent = coordinate
             sessionNeedsCheck = false
@@ -187,13 +200,17 @@ final class SessionModel: ObservableObject {
         } catch { operationFailed(error) }
     }
 
-    private func beginLoop() {
+    private func beginLoop(immediate: Bool = false) {
         let token = generation
         refreshing = true
         activityChanged?(true)
         loop = Task { [weak self] in
+            var sendImmediately = immediate
             while !Task.isCancelled {
-                do { try await Task.sleep(nanoseconds: 4_000_000_000) } catch { return }
+                if !sendImmediately {
+                    do { try await Task.sleep(nanoseconds: 4_000_000_000) } catch { return }
+                }
+                sendImmediately = false
                 guard let self, self.maySendUpdates, self.generation == token, self.connected else { return }
                 if self.busy { continue }
                 guard let coordinate = self.lastSent else { return }
@@ -223,6 +240,7 @@ final class SessionModel: ObservableObject {
                     let wasChecking = self.sessionNeedsCheck
                     self.sessionNeedsCheck = false
                     self.lastCommandAt = Date()
+                    self.lastSuccessfulUpdateUptime = ProcessInfo.processInfo.systemUptime
                     self.failure = nil
                     if wasChecking {
                         self.status = "Location refresh succeeded. Check another app to verify."
@@ -324,6 +342,15 @@ final class SessionModel: ObservableObject {
         if returningFromBackground && connected { sessionNeedsCheck = true }
         if sessionNeedsCheck {
             status = "Session needs checking after leaving the app. Set or Restore to test it."
+        }
+        // Resume only a location already sent in this process. Never resurrect
+        // a cleared location, a failed connection, or a previous app launch.
+        if returningFromBackground, !busy, connected, unresolved,
+           lastSent != nil, failure == nil, !refreshing {
+            status = "Checking the existing location session..."
+            beginLoop(immediate: true)
+        } else if refreshing {
+            activityChanged?(true)
         }
     }
 
