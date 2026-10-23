@@ -6,7 +6,7 @@ Temporary build-only repository for the unsigned Catter iPhone IPA and Apple Sil
 
 In **Actions**, select **Build experimental iPhone IPA** or **Build Catter macOS installer**, then **Run workflow**. Both use standard macOS runners. Workflows run manually only; artifacts are retained for seven days.
 
-Download the artifact after a successful run. The IPA is unsigned and must be signed to your Apple Account before installation. The Mac installer targets Apple Silicon and macOS 13 or later; its ad-hoc signature is not Apple notarization. Builds and smoke checks do not establish successful Apple authentication or operation on a physical iPhone.
+Download the artifact after a successful run. The IPA is unsigned and must be signed to your Apple Account before installation. The Mac installer targets Apple Silicon and macOS 15 or later; its ad-hoc signature is not Apple notarization. Builds and smoke checks do not establish successful Apple authentication or operation on a physical iPhone.
 
 The activation API URL is public configuration, not an owner credential. No Apple credentials or signing certificates are needed in Actions. Never put credentials or invitation codes in repository files or issues.
 

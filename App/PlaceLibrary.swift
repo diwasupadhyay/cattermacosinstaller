@@ -58,6 +58,13 @@ final class PlaceLibrary: ObservableObject {
         persist(saved: saved, recent: Array(updated.prefix(20)))
     }
     func remove(_ id: UUID) { persist(saved: saved.filter { $0.id != id }, recent: recent) }
+    func rename(_ id: UUID, to name: String) {
+        let label = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        guard !label.isEmpty, let index = saved.firstIndex(where: { $0.id == id }) else { return }
+        var updated = saved
+        updated[index].name = label
+        persist(saved: updated, recent: recent)
+    }
     func clearRecent() { persist(saved: saved, recent: []) }
     private func persist(saved: [SavedPlace], recent: [SavedPlace]) {
         // Never replace an archive that failed to load with an empty library.

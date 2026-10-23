@@ -17,6 +17,7 @@ enum PairingStore {
 }
 final class DVTClient {
     static var connects = 0
+    static var preparationAllowedOnLastConnect = true
     static var sends = 0
     static var clears = 0
     static var failedSetsRemaining = 0
@@ -25,7 +26,10 @@ final class DVTClient {
     static var pauseNextSet = false
     static let setStarted = DispatchSemaphore(value: 0)
     static let releaseSet = DispatchSemaphore(value: 0)
-    func connect(pairingURL: URL, progress: @escaping (String) -> Void = { _ in }) throws { Self.connects += 1 }
+    func connect(pairingURL: URL, progress: @escaping (String) -> Void = { _ in }, allowPreparation: Bool = true) throws {
+        Self.connects += 1
+        Self.preparationAllowedOnLastConnect = allowPreparation
+    }
     func set(_ coordinate: Coordinate) throws {
         if Self.pauseNextSet {
             Self.pauseNextSet = false
@@ -115,6 +119,7 @@ final class DVTClient {
         precondition(model.awaitingRestoreReading)
         model.restorationReading(simulated: false)
         precondition(!model.awaitingRestoreReading && model.unresolved)
+        precondition(model.realLocationReceived && model.statusTitle == "Real location received")
         model.confirmRestored()
 
         DVTClient.failSet = true
@@ -132,6 +137,8 @@ final class DVTClient {
         await model.restore()
         precondition(restoreNotifications == 1 && model.failure == nil && !model.refreshing && model.lastSent == nil,
                      "Restore must reconnect once, stop refresh, then notify observation")
+        precondition(!DVTClient.preparationAllowedOnLastConnect,
+                     "Restore recovery must not enter developer-image download or preparation")
         model.restorationUnavailable("No fresh normal location confirmed")
         precondition(model.unresolved && model.status == "No fresh normal location confirmed",
                      "Missing GPS confirmation must stay explicit and unresolved")

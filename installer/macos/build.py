@@ -122,8 +122,8 @@ with (app / 'Contents/Info.plist').open('wb') as stream:
         'CFBundleIdentifier': 'com.diwasupadhyay.catter.setup',
         'CFBundleName': 'Catter Setup', 'CFBundleDisplayName': 'Catter Setup',
         'CFBundleExecutable': 'CatterSetup', 'CFBundlePackageType': 'APPL',
-        'CFBundleShortVersionString': '0.11.1', 'CFBundleVersion': '33',
-        'CFBundleIconFile': 'Catter.icns', 'LSMinimumSystemVersion': '13.0',
+        'CFBundleShortVersionString': '0.11.2', 'CFBundleVersion': '34',
+        'CFBundleIconFile': 'Catter.icns', 'LSMinimumSystemVersion': '15.0',
         'NSHighResolutionCapable': True,
         'NSLocalNetworkUsageDescription': 'Connect to your iPhone to install and prepare Catter.',
     }, stream)

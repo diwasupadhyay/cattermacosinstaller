@@ -10,6 +10,8 @@ final class BackgroundLocationMonitor: NSObject, ObservableObject, CLLocationMan
     @Published private(set) var running = false
     @Published private(set) var message = "Off"
     @Published private(set) var observation: String?
+    @Published private(set) var restoredCoordinate: Coordinate?
+    @Published private(set) var restoredAccuracy: Double?
     var availabilityChanged: ((Bool) -> Void)?
     var restorationReading: ((Bool?) -> Void)?
     var restorationUnavailable: ((String) -> Void)?
@@ -21,6 +23,8 @@ final class BackgroundLocationMonitor: NSObject, ObservableObject, CLLocationMan
 
     func sampleAfterRestore() {
         observation = nil
+        restoredCoordinate = nil
+        restoredAccuracy = nil
         verification?.cancel()
         sampleRequestedAt = Date()
         let authorization = manager.authorizationStatus
@@ -61,10 +65,14 @@ final class BackgroundLocationMonitor: NSObject, ObservableObject, CLLocationMan
     }
 
     func setSessionActive(_ value: Bool) {
+        // A repeated "inactive" notification (such as opening Maps after
+        // Restore) must not silently cancel the pending real-location check.
+        guard sessionActive != value else { return }
         verification?.cancel()
         verification = nil
         sampleRequestedAt = nil
         sessionActive = value
+        if value { restoredCoordinate = nil; restoredAccuracy = nil }
         update()
     }
 
@@ -123,6 +131,8 @@ final class BackgroundLocationMonitor: NSObject, ObservableObject, CLLocationMan
             }
             restorationReading?(simulated)
             if simulated == false && precise {
+                restoredCoordinate = try? Coordinate(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
+                restoredAccuracy = location.horizontalAccuracy
                 verification?.cancel()
                 verification = nil
                 sampleRequestedAt = nil

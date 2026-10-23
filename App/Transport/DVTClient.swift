@@ -7,6 +7,7 @@ final class DVTClient {
     private var handshake: OpaquePointer?
     private var server: OpaquePointer?
     private var location: OpaquePointer?
+    private var lastWorkingRoute: (host: String, remoteXPC: Bool)?
 
     static func check(_ error: UnsafeMutablePointer<IdeviceFfiError>?, stage: String) throws {
         guard let error else { return }
@@ -18,19 +19,26 @@ final class DVTClient {
 
     func connect(pairingURL: URL, progress: @escaping (String) -> Void = { _ in }, allowPreparation: Bool = true) throws {
         var failures: [String] = []
+        var routes = LocalEndpoints.candidates().flatMap { host in
+            [false, true].map { (host: host, remoteXPC: $0) }
+        }
+        if let previous = lastWorkingRoute,
+           let index = routes.firstIndex(where: { $0.host == previous.host && $0.remoteXPC == previous.remoteXPC }) {
+            let preferred = routes.remove(at: index)
+            routes.insert(preferred, at: 0)
+        }
         // Never retry localhost: device logs explicitly reject local origins.
-        for host in LocalEndpoints.candidates() {
-            for remoteXPC in [false, true] {
-                let protocolName = remoteXPC ? "RemoteXPC" : "Remote pairing"
-                do {
-                    progress("Opening \(protocolName) through \(host)...")
-                    try connectRoute(host: host, pairingURL: pairingURL, progress: progress,
-                                     allowPreparation: allowPreparation, remoteXPC: remoteXPC)
-                    progress("Location service connected through \(protocolName)")
-                    return
-                } catch {
-                    failures.append("\(protocolName) \(host): \(error.localizedDescription)")
-                }
+        for (host, remoteXPC) in routes {
+            let protocolName = remoteXPC ? "RemoteXPC" : "Remote pairing"
+            do {
+                progress("Opening \(protocolName) through \(host)...")
+                try connectRoute(host: host, pairingURL: pairingURL, progress: progress,
+                                 allowPreparation: allowPreparation, remoteXPC: remoteXPC)
+                lastWorkingRoute = (host, remoteXPC)
+                progress("Location service connected through \(protocolName)")
+                return
+            } catch {
+                failures.append("\(protocolName) \(host): \(error.localizedDescription)")
             }
         }
         throw AppError.message("No local route completed the developer connection.\n" + failures.joined(separator: "\n"))
@@ -118,3 +126,4 @@ final class DVTClient {
         adapter = nil
     }
 }
+

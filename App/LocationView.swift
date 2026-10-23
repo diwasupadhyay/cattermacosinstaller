@@ -27,6 +27,7 @@ struct LocationView: View {
     @State private var pendingLocation: Coordinate?
     @State private var confirmChange = false
     @State private var confirmRestore = false
+    @Environment(\.openURL) private var openURL
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -53,36 +54,9 @@ struct LocationView: View {
                     if let searchError { Text(searchError).foregroundStyle(.red).font(.caption) }
                     if !results.isEmpty { searchResults }
                     map
-                    HStack(alignment: .top) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(model.selected == nil ? "Choose a place" : "Selected location").font(.subheadline.weight(.semibold))
-                            if let selected = model.selected {
-                                Text(String(format: "%.5f, %.5f", selected.latitude, selected.longitude))
-                                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary).textSelection(.enabled)
-                            } else {
-                                Text("Search above or tap the map.").font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer(minLength: 12)
-                        Button { searchFocused = false; coordinates = true } label: {
-                            Label("Coordinates", systemImage: "number")
-                                .font(.subheadline).padding(.vertical, 12)
-                        }.accessibilityLabel("Enter coordinates")
-                    }
-                    if let selected = model.selected {
-                        Button {
-                            placeName = selectedName; savePlace = true
-                        } label: {
-                            Label(library.contains(selected) ? "Place saved" : "Save this place", systemImage: library.contains(selected) ? "bookmark.fill" : "bookmark")
-                        }.disabled(library.contains(selected))
-                    }
+                    selectionCard
                     if let error = library.error { Text(error).font(.caption).foregroundStyle(.red) }
-                    if model.unresolved && model.canConfirmRestored {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Check your real location in Maps before confirming.").font(.caption).foregroundStyle(.secondary)
-                            Button("Real location verified") { model.confirmRestored() }.font(.subheadline)
-                        }
-                    }
+                    if model.canConfirmRestored { restoreCard }
                 }.padding(20)
             }
             .background(CatterTheme.background)
@@ -144,6 +118,67 @@ struct LocationView: View {
         }
     }
 
+    private var selectionCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Selected destination", systemImage: "mappin.and.ellipse")
+                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            if let selected = model.selected {
+                Text(selectedName).font(.headline).fixedSize(horizontal: false, vertical: true)
+                Text(String(format: "%.5f, %.5f", selected.latitude, selected.longitude))
+                    .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary).textSelection(.enabled)
+                if let sent = model.lastSent, sent != selected {
+                    Label("Selection has not been applied", systemImage: "info.circle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { selectionTools(selected) }
+                    VStack(alignment: .leading, spacing: 8) { selectionTools(selected) }
+                }
+            } else {
+                Text("Search for a place or tap the map.").font(.subheadline).foregroundStyle(.secondary)
+                Button("Enter coordinates", systemImage: "number") { searchFocused = false; coordinates = true }
+                    .buttonStyle(.bordered).controlSize(.large)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16).background(CatterTheme.surface, in: RoundedRectangle(cornerRadius: CatterTheme.cornerRadius))
+    }
+
+    @ViewBuilder private func selectionTools(_ selected: Coordinate) -> some View {
+        Button("Coordinates", systemImage: "number") { searchFocused = false; coordinates = true }
+            .buttonStyle(.bordered).controlSize(.large)
+        Button(library.contains(selected) ? "Saved" : "Save place", systemImage: "bookmark") {
+            searchFocused = false; placeName = selectedName; savePlace = true
+        }.buttonStyle(.bordered).controlSize(.large).disabled(library.contains(selected))
+    }
+
+    private var restoreCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(model.realLocationReceived ? "Fresh location received" : "Check your real location",
+                  systemImage: model.realLocationReceived ? "checkmark.circle.fill" : "location.circle")
+                .font(.headline)
+            Text(model.awaitingRestoreReading
+                 ? "Simulation has stopped. Waiting for iOS to report a fresh location."
+                 : "Check your position in Maps. Find My and address labels may update later.")
+                .font(.subheadline).foregroundStyle(.secondary)
+            if model.realLocationReceived, let accuracy = monitor.restoredAccuracy {
+                Text("Reported accuracy: about \(Int(accuracy.rounded())) m")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { restoreTools }
+                VStack(alignment: .leading, spacing: 8) { restoreTools }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16).background(CatterTheme.surface, in: RoundedRectangle(cornerRadius: CatterTheme.cornerRadius))
+    }
+
+    @ViewBuilder private var restoreTools: some View {
+        Button("Open Maps", systemImage: "map") { openURL(URL(string: "maps://")!) }
+            .buttonStyle(.bordered).controlSize(.large)
+        Button("Position is correct", systemImage: "checkmark") { model.confirmRestored() }
+            .buttonStyle(.bordered).controlSize(.large)
+    }
+
     private var searchField: some View {
         HStack(spacing: 12) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -196,8 +231,9 @@ struct LocationView: View {
                 searchFocused = false
                 confirmRestore = true
             } label: {
-                Text(model.restoring ? "Restoring..." : "Restore real location")
-                    .font(.subheadline.weight(.medium)).frame(maxWidth: .infinity, minHeight: 44)
+                Label(model.restoring ? "Stopping simulation..." : "Restore real location", systemImage: "location.slash")
+                    .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 48)
+                    .background(CatterTheme.surface, in: RoundedRectangle(cornerRadius: 14))
             }
             .disabled(model.restoring || (model.busy && !model.refreshing) || !model.pairingAvailable)
         }.padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 8)
@@ -213,12 +249,12 @@ struct LocationView: View {
                 Text(model.statusTitle).font(.subheadline.weight(.semibold)).accessibilityIdentifier("sessionStatus")
                 Text(model.status).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if let date = model.lastCommandAt {
-                    Text("Last command " + date.formatted(date: .omitted, time: .shortened))
+                    Text("Last command " + date.formatted(date: .omitted, time: .standard))
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)
-            if model.busy && !model.refreshing { ProgressView() }
+            if (model.busy && !model.refreshing) || model.awaitingRestoreReading { ProgressView().accessibilityLabel(model.restoring ? "Stopping simulation" : "Checking location") }
             if model.pairingAvailable && model.failure != nil && !model.busy {
                 Button("Reconnect") { Task { await model.connect() } }.font(.subheadline)
             }

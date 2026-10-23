@@ -6,6 +6,9 @@ struct PlacesView: View {
     @State private var query = ""
     @State private var section = 0
     @State private var clearHistory = false
+    @State private var renameID: UUID?
+    @State private var renameText = ""
+    @State private var showRename = false
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -35,6 +38,17 @@ struct PlacesView: View {
                                 Image(systemName: "arrow.up.left").foregroundStyle(.secondary)
                             }.padding(.vertical, 6)
                         }
+                        .contextMenu {
+                            Button("Choose on map", systemImage: "map") { choose(place) }
+                            if section == 0 {
+                                Button("Rename", systemImage: "pencil") {
+                                    renameID = place.id; renameText = place.name; showRename = true
+                                }
+                                Button("Delete", systemImage: "trash", role: .destructive) { library.remove(place.id) }
+                            } else if let coordinate = place.coordinate, !library.contains(coordinate) {
+                                Button("Save place", systemImage: "bookmark") { library.save(coordinate, name: place.name) }
+                            }
+                        }
                         .swipeActions {
                             if section == 0 {
                                 Button("Delete", role: .destructive) { library.remove(place.id) }
@@ -62,6 +76,12 @@ struct PlacesView: View {
             .confirmationDialog("Clear recent locations?", isPresented: $clearHistory, titleVisibility: .visible) {
                 Button("Clear recent locations", role: .destructive) { library.clearRecent() }
             } message: { Text("Saved places and the current simulation are unchanged.") }
+            .alert("Rename place", isPresented: $showRename) {
+                TextField("Place name", text: $renameText)
+                Button("Save") { if let id = renameID { library.rename(id, to: renameText) } }
+                    .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Cancel", role: .cancel) {}
+            }
         }
     }
 }

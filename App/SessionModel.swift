@@ -17,6 +17,7 @@ final class SessionModel: ObservableObject {
     @Published private(set) var sessionNeedsCheck = false
     @Published private(set) var backgroundUpdatesAllowed = false
     @Published private(set) var awaitingRestoreReading = false
+    @Published private(set) var realLocationReceived = false
     @Published private(set) var lastCommandAt: Date?
     var locationSent: ((Coordinate) -> Void)?
     var activityChanged: ((Bool) -> Void)?
@@ -65,8 +66,9 @@ final class SessionModel: ObservableObject {
     var statusTitle: String {
         if restoring { return "Restoring real location" }
         if busy && !refreshing { return "Connecting and applying location" }
-        if awaitingRestoreReading { return "Checking real location" }
+        if awaitingRestoreReading { return "Simulation stopped" }
         if failure != nil { return connected ? "Action needed" : "Connection interrupted" }
+        if realLocationReceived { return "Real location received" }
         if sessionNeedsCheck { return "Connection needs checking" }
         if refreshing { return "Simulation active" }
         if unresolved { return "Location needs verification" }
@@ -99,14 +101,14 @@ final class SessionModel: ObservableObject {
         activityChanged?(false)
     }
 
-    private func ensureConnected() async throws {
+    private func ensureConnected(allowPreparation: Bool = true) async throws {
         guard !connected else { return }
         pairingAvailable = PairingStore.isAvailable
         guard pairingAvailable else { throw AppError.message("Pairing is not set up yet. Open Settings and choose Pair this iPhone.") }
         status = "Connecting to this iPhone…"
         try await perform(watchdogSeconds: 360) { [client] in try client.connect(pairingURL: PairingStore.url(), progress: { [weak self] message in
             Task { @MainActor in self?.status = message }
-        }) }
+        }, allowPreparation: allowPreparation) }
         connected = true
         sessionNeedsCheck = false
     }
@@ -152,6 +154,7 @@ final class SessionModel: ObservableObject {
         }
         stopLoop()
         awaitingRestoreReading = false
+        realLocationReceived = false
         let token = generation
         busy = true
         defer { busy = false }
@@ -239,13 +242,16 @@ final class SessionModel: ObservableObject {
     func restore() async {
         guard !restoring, !busy || refreshing else { return }
         awaitingRestoreReading = false
+        realLocationReceived = false
         restoring = true
         stopLoop()
         busy = true
         status = "Stopping simulation…"
         defer { busy = false; restoring = false }
         do {
-            try await ensureConnected()
+            // Restore must not download or personalize a developer image.
+            // Use the existing handle first, then reconnect only if necessary.
+            try await ensureConnected(allowPreparation: false)
             markUnresolved(true)
             do {
                 try await perform { [client] in try client.restore() }
@@ -253,7 +259,7 @@ final class SessionModel: ObservableObject {
                 // A saved handle can be stale after locking. Clear is idempotent:
                 // reconnect once and retry, never restart the simulation here.
                 connected = false
-                try await ensureConnected()
+                try await ensureConnected(allowPreparation: false)
                 try await perform { [client] in try client.restore() }
             }
             lastSent = nil
@@ -269,7 +275,10 @@ final class SessionModel: ObservableObject {
 
     func restorationReading(simulated: Bool?) {
         guard unresolved, !refreshing, lastSent == nil else { return }
-        if simulated == false { awaitingRestoreReading = false }
+        if simulated == false {
+            awaitingRestoreReading = false
+            realLocationReceived = true
+        }
         if simulated == true {
             status = "iOS still reports a simulated location. Try Restore again."
         } else {
