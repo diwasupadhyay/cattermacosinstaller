@@ -1,0 +1,56 @@
+name: Catter
+packages:
+  SideSign:
+    path: Vendor/SideSign
+options:
+  bundleIdPrefix: com.diwasupadhyay
+  deploymentTarget:
+    iOS: '18.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    TARGETED_DEVICE_FAMILY: '1'
+    CODE_SIGNING_ALLOWED: NO
+targets:
+  Catter:
+    type: application
+    platform: iOS
+    sources: [App]
+    dependencies:
+      - package: SideSign
+        product: SideSign
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.diwasupadhyay.ghostlyios
+        SWIFT_OBJC_BRIDGING_HEADER: App/Transport/Bridge.h
+        HEADER_SEARCH_PATHS: '$(SRCROOT)/Vendor/idevice/ffi'
+        LIBRARY_SEARCH_PATHS: '$(SRCROOT)/Vendor/idevice/target/aarch64-apple-ios/release'
+        OTHER_LDFLAGS: ['$(inherited)', '$(SRCROOT)/Vendor/idevice/target/aarch64-apple-ios/release/libidevice_ffi.a', '-framework', Security, '-framework', SystemConfiguration, '-lresolv', '-liconv', '-lc++']
+        MARKETING_VERSION: '0.11.1'
+        CURRENT_PROJECT_VERSION: '26'
+        GENERATE_INFOPLIST_FILE: YES
+        CATTER_ACCESS_URL: https://catter-access.catter-access.workers.dev
+        CATTER_SUPPORT_URL: https://github.com/diwasupadhyay/catter/blob/main/README.md
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: build/Info.plist
+      properties:
+        CFBundleDisplayName: Catter
+        CatterSupportURL: '$(CATTER_SUPPORT_URL)'
+        CatterAccessURL: '$(CATTER_ACCESS_URL)'
+        UILaunchScreen: {}
+        NSBonjourServices: ["_remotepairing-pairable-host._tcp"]
+        NSLocalNetworkUsageDescription: Connect to this iPhone's developer service through LocalDevVPN.
+        NSLocationWhenInUseUsageDescription: Observe the location reported by iOS and continue the active simulation session in the background when you enable monitoring. No location history is saved or uploaded.
+        UIBackgroundModes: [location, processing]
+        BGTaskSchedulerPermittedIdentifiers: [com.diwasupadhyay.catter.renewal]
+        UIFileSharingEnabled: false
+        LSSupportsOpeningDocumentsInPlace: false
+        ITSAppUsesNonExemptEncryption: true
+        CFBundleURLTypes:
+          - CFBundleURLSchemes: [catter, ghostlyios]
+schemes:
+  Catter:
+    build:
+      targets:
+        Catter: all

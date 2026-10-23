@@ -1,0 +1,50 @@
+name: Build Catter macOS installer
+on:
+  workflow_dispatch:
+env:
+  CATTER_ACCESS_URL: https://catter-access.catter-access.workers.dev
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: pwnapplehat/iPASide
+          ref: 6d86605d0e5291e9d3dbd82a4b9aabe2901d2c93
+          path: Vendor/iPASide
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: zhlynn/zsign
+          ref: 614caa8d1ca949e260e5746144aa52d27a4b08d6
+          path: Vendor/zsign
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Build native app and bundled backend
+        run: |
+          brew install openssl@3 pkgconf
+          python installer/macos/build.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: CatterSetup-macOS-${{ matrix.arch }}
+          path: |
+            build/macos-${{ matrix.arch }}/CatterSetup-macOS-*.zip
+            build/macos-${{ matrix.arch }}/SHA256.txt
+            build/macos-${{ matrix.arch }}/BUILD.txt
+            build/macos-${{ matrix.arch }}/DEPENDENCIES.txt
+          if-no-files-found: error
+          retention-days: 7

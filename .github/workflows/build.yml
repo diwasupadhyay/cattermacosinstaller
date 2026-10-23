@@ -1,0 +1,98 @@
+name: Build experimental iPhone IPA
+on:
+  workflow_dispatch:
+
+env:
+  CATTER_ACCESS_URL: https://catter-access.catter-access.workers.dev
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Check coordinates and session lifecycle
+        run: |
+          mkdir -p build
+          swiftc App/Coordinate.swift App/Transport/AssetIntegrity.swift Tests/main.swift -o build/coordinate-tests
+          build/coordinate-tests
+          swiftc -parse-as-library App/Coordinate.swift App/SessionModel.swift Tests/SessionChecks.swift -o build/session-tests
+          build/session-tests
+          swiftc -parse-as-library App/UpdateManager.swift App/SigningStatus.swift Tests/UpdateChecks.swift -o build/update-tests
+          build/update-tests
+          swiftc -parse-as-library App/Renewal/RenewalDiagnostics.swift Tests/RenewalDiagnosticChecks.swift -o build/renewal-diagnostic-tests
+          build/renewal-diagnostic-tests
+          swiftc -parse-as-library App/Renewal/RenewalLedger.swift Tests/RenewalChecks.swift -o build/renewal-tests
+          build/renewal-tests
+          swiftc -parse-as-library App/Renewal/AppleProvisioningClient.swift Tests/ProvisioningChecks.swift -o build/provisioning-tests
+          build/provisioning-tests
+      - name: Fetch pinned native transport source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: jkcoxson/idevice
+          ref: 3854a5df4a5a6dee71ffce4d8befc2ea356a8065
+          path: Vendor/idevice
+          persist-credentials: false
+      - name: Fetch pinned project generator
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: yonaskolb/XcodeGen
+          ref: 21ac9944b0ab546a07422dbed86f33dd2ebd76f8
+          path: Vendor/XcodeGen
+          persist-credentials: false
+      - name: Build native transport from source
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add --toolchain stable aarch64-apple-ios
+          python3 scripts/patch_pairing.py Vendor/idevice
+          python3 scripts/patch_tunnel_diagnostics.py Vendor/idevice
+          cd Vendor/idevice
+          IPHONEOS_DEPLOYMENT_TARGET=17.4 cargo +stable build --locked --release \
+            --target aarch64-apple-ios -p idevice-ffi --no-default-features \
+            --features 'ring,dvt,location_simulation,tunnel_tcp_stack,tcp,cryptexd,mobile_image_mounter,afc,installation_proxy'
+      - name: Prepare pinned renewal libraries
+        run: python3 scripts/prepare_renewal_dependencies.py
+      - name: Generate and build iPhone app
+        run: |
+          swift build --package-path Vendor/XcodeGen -c release --product xcodegen
+          Vendor/XcodeGen/.build/release/xcodegen generate
+          xcodebuild -project Catter.xcodeproj -scheme Catter \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO \
+            CATTER_ACCESS_URL="$CATTER_ACCESS_URL" \
+            CATTER_SUPPORT_URL="https://github.com/diwasupadhyay/catter/blob/main/README.md" \
+            CODE_SIGNING_REQUIRED=NO build
+      - name: Verify runtime dependencies
+        run: |
+          python3 scripts/check_dependencies.py build/DerivedData/Build/Products/Release-iphoneos/Catter.app/Catter
+      - name: Package unsigned IPA and source provenance
+        run: |
+          mkdir -p build/Payload build/artifact
+          cp -R build/DerivedData/Build/Products/Release-iphoneos/Catter.app build/Payload/
+          mkdir -p build/Payload/Catter.app/Licenses
+          cp Licenses/idevice.txt build/Payload/Catter.app/Licenses/
+          cp Licenses/iPASide.txt build/Payload/Catter.app/Licenses/
+          cp Licenses/AGPL-3.0.txt build/Payload/Catter.app/Licenses/
+          cp Vendor/SideSign/README.md build/Payload/Catter.app/Licenses/SideSign.md
+          for library in CodeSignKit GSACryptoKit AnisetteKit; do
+            cp Vendor/$library/LICENSE build/Payload/Catter.app/Licenses/$library.txt
+          done
+          cp LICENSE build/Payload/Catter.app/Licenses/Catter.txt
+          (cd build && zip -qr artifact/Catter-unsigned.ipa Payload)
+          cp README.md build/artifact/
+          cp -R docs build/artifact/
+          { git rev-parse HEAD; git -C Vendor/idevice rev-parse HEAD; xcodebuild -version; rustc +stable --version; } > build/artifact/BUILD.txt
+          shasum -a 256 build/artifact/Catter-unsigned.ipa > build/artifact/SHA256.txt
+      - name: Upload experimental unsigned IPA
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Catter-experimental-unsigned
+          path: build/artifact/
+          if-no-files-found: error
+          retention-days: 7
