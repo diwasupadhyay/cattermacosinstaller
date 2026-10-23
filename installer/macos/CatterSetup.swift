@@ -21,6 +21,10 @@ final class SetupModel: ObservableObject {
     @Published var details = ""
     @Published var failed = false
     @Published var prompt: SetupPrompt?
+    @Published var statusTitle = "Getting ready"
+    @Published var authenticationMethod = "Local Mac"
+    private var userOperation = false
+
     private var process: Process?
     private var input: FileHandle?
     private var buffer = Data()
@@ -40,6 +44,8 @@ final class SetupModel: ObservableObject {
         ipaName = "No app selected"
         step = 0
         prompt = nil
+        authenticationMethod = "Local Mac"
+        userOperation = false
     }
 
     func checkCrashRecovery() {
@@ -47,6 +53,23 @@ final class SetupModel: ObservableObject {
         account = "synthetic"; password = "synthetic"; ipa = "synthetic"
         clearEngineState()
         precondition(!ready && !busy && !access && !signedIn && account.isEmpty && password.isEmpty && ipa.isEmpty && prompt == nil)
+    }
+
+    func checkStatusPresentation() {
+        report("Sign-in stopped (HTTP 429).", error: true)
+        precondition(failed && statusTitle == "Apple needs a pause")
+        let original = status
+        report("Invitation verified and remembered securely for this iPhone.")
+        precondition(failed && status == original)
+        report("Background message")
+        precondition(failed && status == original)
+        userOperation = true
+        report("Remote Mac metadata enabled. Enter your password and sign in again.")
+        precondition(!failed && statusTitle == "Fallback ready" && !signedIn)
+        precondition(authenticationMethod == "Remote Mac (approved)")
+        report("Signed in. Click Continue to choose your IPA.")
+        precondition(statusTitle == "Apple Account connected")
+        clearEngineState()
     }
 
     func start() {
@@ -114,9 +137,26 @@ final class SetupModel: ObservableObject {
     }
 
     func report(_ text: String, error: Bool = false) {
-        status = text
-        failed = error
         details = String((details + text + "\n").suffix(64_000))
+        // Background invitation checks must not replace an actionable error.
+        if text.hasPrefix("Invitation verified") { return }
+        if failed && !error && !userOperation { return }
+        failed = error
+        statusTitle = error ? "Action needed" : busy ? "Working on it" : "Ready"
+        status = text
+        if text.contains("HTTP 429") {
+            statusTitle = "Apple needs a pause"
+            status = "Apple temporarily limited sign-in requests. Wait before trying again; repeated attempts may prolong the limit. Your installed app is unchanged."
+        } else if text.contains("Remote Mac metadata enabled") {
+            authenticationMethod = "Remote Mac (approved)"
+            statusTitle = "Fallback ready"
+            status = "Enter your password and sign in again. Switching methods has not signed you in."
+        } else if text.contains("Signed in. Click Continue") {
+            statusTitle = "Apple Account connected"
+            status = "Continue to choose the Catter IPA."
+        } else if text.hasPrefix("Setup complete.") {
+            statusTitle = "Your iPhone is ready"
+        }
     }
 
     private func receive(_ message: [String: Any]) {
@@ -129,6 +169,8 @@ final class SetupModel: ObservableObject {
             access = message["access"] as? Bool ?? false
             busy = message["busy"] as? Bool ?? false
             signedIn = message["authenticated"] as? Bool ?? false
+            if !busy { userOperation = false }
+            if !access { step = 0 }
             account = message["email"] as? String ?? ""
             if message["ipa"] as? Bool != true { ipa = ""; ipaName = "No app selected" }
         case "status": report(message["text"] as? String ?? "")
@@ -144,7 +186,11 @@ final class SetupModel: ObservableObject {
     }
 
     func send(_ command: [String: Any], operation: Bool = true) {
-        if operation { guard ready, !busy else { return }; busy = true }
+        if operation {
+            guard ready, !busy else { return }
+            busy = true; userOperation = true; failed = false
+            statusTitle = "Working on it"; status = "Please wait..."
+        }
         do {
             var data = try JSONSerialization.data(withJSONObject: command)
             data.append(10)
@@ -247,7 +293,10 @@ struct PromptView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text(prompt.title).font(.title2.weight(.semibold))
-            Text(prompt.text).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                Text(prompt.text).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+            }.scrollIndicators(.hidden).frame(maxHeight: 300)
             if (prompt.kind == "code" || prompt.kind == "access") {
                 SecureField(prompt.kind == "access" ? "Catter invitation code" : "Apple verification code", text: $code).textFieldStyle(.roundedBorder)
             }
@@ -262,7 +311,7 @@ struct PromptView: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel") { code = ""; model.reply(nil) }.keyboardShortcut(.cancelAction)
+                Button(prompt.title.contains("metadata") ? "Keep local method" : "Cancel") { code = ""; model.reply(nil) }.keyboardShortcut(.cancelAction)
                 Button((prompt.kind == "code" || prompt.kind == "access") ? "Verify" : prompt.kind == "certificates" ? "Review replacement" : "Continue") {
                     let answer: Any
                     if (prompt.kind == "code" || prompt.kind == "access") { answer = code }
@@ -274,8 +323,9 @@ struct PromptView: View {
                 .disabled(!canContinue)
                 .keyboardShortcut(.defaultAction)
             }
-        }.padding(28).frame(width: 470)
+        }.padding(28).frame(width: 540)
         .interactiveDismissDisabled()
+        .onSubmit { if canContinue && (prompt.kind == "code" || prompt.kind == "access") { model.reply(code); code = "" } }
     }
 }
 
@@ -307,6 +357,9 @@ struct SetupView: View {
             sidebar
             VStack(alignment: .leading, spacing: 20) {
                 HStack {
+                    Label(model.access ? "Access verified" : "Invitation required", systemImage: model.access ? "checkmark.shield.fill" : "lock.shield")
+                        .font(.caption.weight(.medium)).foregroundStyle(model.access ? Color.green : Color.secondary)
+                    Divider().frame(height: 18)
                     Label(model.signedIn ? model.account : "Not signed in", systemImage: model.signedIn ? "person.crop.circle.badge.checkmark" : "person.crop.circle")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     Spacer()
@@ -318,21 +371,27 @@ struct SetupView: View {
                     Text(title).font(.system(size: 28, weight: .semibold))
                     page
                     Spacer(minLength: 8)
-                    Text("Optionally remember sign-in for seven days. Sign out removes saved tokens.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    if model.step == 0 && model.access {
+                        Text("Your password is sent directly to Apple. Remembering sign-in is optional.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 .padding(28).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .background(Color(white: 0.12), in: RoundedRectangle(cornerRadius: 20))
                 .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Color.white.opacity(0.07)))
                 HStack(spacing: 12) {
                     if model.busy { ProgressView().controlSize(.small) }
-                    Text(model.status).font(.callout)
-                        .foregroundStyle(model.failed ? Color(red: 1, green: 0.64, blue: 0.59) : Color.secondary)
-                        .lineLimit(3).help(model.status)
+                    if !model.busy { Image(systemName: model.failed ? "exclamationmark.circle.fill" : "info.circle").foregroundStyle(model.failed ? Color.orange : Color.secondary) }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(model.statusTitle).font(.callout.weight(.semibold))
+                        Text(model.status).font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(3).help(model.status)
+                    }
                     Spacer(minLength: 0)
                     Button { showDetails = true } label: { Image(systemName: "info.circle").font(.title3) }
                         .buttonStyle(.plain).help("Show setup details")
-                }.frame(height: 60)
+                }.padding(14).frame(maxWidth: .infinity, minHeight: 86, alignment: .leading)
+                    .background(model.failed ? Color.orange.opacity(0.08) : Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
                 HStack(spacing: 12) {
                     Button("Back") { model.step -= 1 }
                         .disabled(!model.access || model.busy || model.step == 0)
@@ -348,14 +407,17 @@ struct SetupView: View {
             }.padding(28)
         }
         .buttonStyle(SetupButtonStyle())
-        .frame(minWidth: 880, minHeight: 680)
+        .frame(minWidth: 1000, minHeight: 740)
         .background(Color(white: 0.075)).preferredColorScheme(.dark).tint(.white)
         .sheet(item: $model.prompt) { PromptView(prompt: $0, model: model).buttonStyle(SetupButtonStyle()) }
         .sheet(isPresented: $showDetails) {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Setup details").font(.title2.bold())
                 ScrollView { Text(model.details).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                HStack { Spacer(); Button("Close") { showDetails = false }.keyboardShortcut(.cancelAction) }
+                HStack {
+                    Button("Copy details") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.details, forType: .string) }
+                    Spacer(); Button("Close") { showDetails = false }.keyboardShortcut(.cancelAction)
+                }
             }.padding(28).frame(width: 600, height: 400).buttonStyle(SetupButtonStyle())
         }
     }
@@ -372,9 +434,12 @@ struct SetupView: View {
             Divider()
             ForEach(0..<3) { index in
                 HStack(spacing: 10) {
-                    Image(systemName: model.access && model.step > index ? "checkmark.circle.fill" : "\(index + 1).circle")
+                    Image(systemName: index == 0 && model.signedIn || index == 1 && !model.ipa.isEmpty ? "checkmark.circle.fill" : "\(index + 1).circle")
                     Text(steps[index]).font(.system(size: 13, weight: .medium))
                 }.foregroundStyle(model.access && model.step == index ? Color.white : Color.gray)
+                    .padding(.vertical, 12).padding(.horizontal, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(model.access && model.step == index ? Color.white.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
             }
             Spacer()
             Text("Connect by USB and keep your iPhone unlocked.").font(.caption).foregroundStyle(.secondary)
@@ -382,6 +447,8 @@ struct SetupView: View {
                 if model.updateVersion.isEmpty { model.send(["op": "updates"], operation: false) }
                 else { NSWorkspace.shared.open(URL(string: "https://github.com/diwasupadhyay/catter/releases/latest")!) }
             }.disabled(!model.ready || model.busy).help(model.updateMessage)
+            Text("Version " + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "") + " (" + (Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "") + ")")
+                .font(.caption2).foregroundStyle(.secondary)
             Button("Installer files") { NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL]) }
         }.padding(24).frame(width: 180).frame(maxHeight: .infinity).background(Color(white: 0.055))
     }
@@ -395,6 +462,8 @@ struct SetupView: View {
             Button("Enter invitation code") { model.send(["op": "activate"]) }.disabled(!model.ready || model.busy)
         } else if model.step == 0 {
             Text("Sign in directly to Apple to sign Catter for your iPhone.").foregroundStyle(.secondary)
+            Label("Authentication: " + model.authenticationMethod, systemImage: "desktopcomputer")
+                .font(.caption).foregroundStyle(.secondary)
             TextField("Apple Account email", text: $model.email).textFieldStyle(.roundedBorder)
                 .disabled(model.signedIn || model.busy)
             SecureField("Password", text: $model.password).textFieldStyle(.roundedBorder)
@@ -484,10 +553,11 @@ struct CatterSetupApp: App {
             _ = NSApplication.shared
             let model = SetupModel()
             model.checkCrashRecovery()
+            model.checkStatusPresentation()
             model.ready = true
             model.access = true
             let host = NSHostingView(rootView: SetupView(model: model))
-            for width in [880, 1000, 1200] {
+            for width in [1000, 1100, 1200] {
                 for page in 0..<3 {
                     model.step = page
                     host.frame = NSRect(x: 0, y: 0, width: width, height: 720)

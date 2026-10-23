@@ -235,10 +235,10 @@ class InstallerService:
         except Exception:
             self.access_code = None
             raise
-        if save(identity, self.access_code):
-            self.emit('Invitation verified and remembered securely for this iPhone.')
-        else:
-            self.emit('Invitation verified. Secure storage was unavailable; enter it again next time.')
+        remembered = save(identity, self.access_code)
+        if interactive:
+            self.emit('Invitation verified and remembered securely for this iPhone.' if remembered else
+                      'Invitation verified. Secure storage was unavailable; enter it again next time.')
         if hasattr(self, "session_vault"):
             self.expire_saved_session()
             self.restore_saved_session()
@@ -333,7 +333,8 @@ class InstallerService:
                         from remote_anisette import enable
                         self.mac_metadata = enable(gsa, consent=True)
                         self.remote_metadata_enabled = True
-                        raise RuntimeError(local_failure + '\n\nRemote Mac metadata is now enabled for this setup session. Sign in again with your verified email. No sign-in has been confirmed yet.') from None
+                        self.emit('Remote Mac metadata enabled. Enter your password and sign in again. Your Apple Account is not signed in yet.')
+                        return
                 # Never echo the password even if an upstream error includes it.
                 raise RuntimeError(str(error).replace(password, '[redacted]')) from None
             finally:
