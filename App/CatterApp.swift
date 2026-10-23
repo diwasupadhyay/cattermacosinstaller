@@ -42,6 +42,7 @@ struct CatterApp: App {
                     monitor.availabilityChanged = { model.setBackgroundUpdatesAllowed($0) }
                     model.activityChanged = { monitor.setSessionActive($0) }
                     model.restoreCompleted = { monitor.sampleAfterRestore() }
+                    model.restoreVerificationCancelled = { monitor.cancelRestoreCheck() }
                     monitor.restorationReading = { model.restorationReading(simulated: $0) }
                     monitor.restorationUnavailable = { model.restorationUnavailable($0) }
                 }

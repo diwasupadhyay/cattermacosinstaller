@@ -21,6 +21,15 @@ final class BackgroundLocationMonitor: NSObject, ObservableObject, CLLocationMan
     private var sampleRequestedAt: Date?
     private var verification: Task<Void, Never>?
 
+    func cancelRestoreCheck() {
+        verification?.cancel()
+        verification = nil
+        sampleRequestedAt = nil
+        restoredCoordinate = nil
+        restoredAccuracy = nil
+        if !sessionActive { manager.stopUpdatingLocation() }
+    }
+
     func sampleAfterRestore() {
         observation = nil
         restoredCoordinate = nil

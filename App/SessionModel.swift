@@ -22,6 +22,7 @@ final class SessionModel: ObservableObject {
     var locationSent: ((Coordinate) -> Void)?
     var activityChanged: ((Bool) -> Void)?
     var restoreCompleted: (() -> Void)?
+    var restoreVerificationCancelled: (() -> Void)?
     var installationInProgress: (() -> Bool)?
 
     private let queue = DispatchQueue(label: "com.diwasupadhyay.catter.dvt")
@@ -152,6 +153,7 @@ final class SessionModel: ObservableObject {
             failure = "Enter valid coordinates or choose a place on the map."
             return
         }
+        restoreVerificationCancelled?()
         stopLoop()
         awaitingRestoreReading = false
         realLocationReceived = false
@@ -294,6 +296,7 @@ final class SessionModel: ObservableObject {
 
     func confirmRestored() {
         guard canConfirmRestored else { return }
+        restoreVerificationCancelled?()
         awaitingRestoreReading = false
         markUnresolved(false)
         lastSent = nil

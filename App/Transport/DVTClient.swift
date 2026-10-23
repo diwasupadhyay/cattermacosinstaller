@@ -126,4 +126,3 @@ final class DVTClient {
         adapter = nil
     }
 }
-

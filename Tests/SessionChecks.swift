@@ -58,8 +58,12 @@ final class DVTClient {
         UserDefaults.standard.removeObject(forKey: "simulationUnresolved")
         defer { UserDefaults.standard.removeObject(forKey: "simulationUnresolved") }
         let model = SessionModel()
+        var cancelledRestoreChecks = 0
+        model.restoreVerificationCancelled = { cancelledRestoreChecks += 1 }
         model.select(try Coordinate(latitude: 0.0, longitude: 0.0))
         await model.start()
+        precondition(cancelledRestoreChecks == 1,
+                     "Starting a new simulation must cancel observations from an earlier restore")
         precondition(model.connected && model.unresolved && model.refreshing)
         precondition(DVTClient.connects == 1 && DVTClient.sends == 1)
         await model.connect()
