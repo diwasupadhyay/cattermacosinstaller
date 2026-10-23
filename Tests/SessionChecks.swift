@@ -122,7 +122,7 @@ final class DVTClient {
         await model.restore()
         precondition(model.awaitingRestoreReading)
         model.restorationReading(simulated: false)
-        precondition(!model.awaitingRestoreReading && model.unresolved)
+        precondition(!model.awaitingRestoreReading && !model.unresolved)
         precondition(model.realLocationReceived && model.statusTitle == "Real location received")
         model.confirmRestored()
 
@@ -149,7 +149,7 @@ final class DVTClient {
         model.restorationReading(simulated: true)
         precondition(model.unresolved && model.status.contains("simulated"))
         model.restorationReading(simulated: false)
-        precondition(model.unresolved, "A local reading must not auto-confirm another app's location or address")
+        precondition(!model.unresolved, "A fresh non-simulated reading must clear the installer preparation gate automatically")
         let afterRestore = DVTClient.sends
         try await Task.sleep(nanoseconds: 4_300_000_000)
         precondition(DVTClient.sends == afterRestore, "No queued refresh may reapply a location after Restore")

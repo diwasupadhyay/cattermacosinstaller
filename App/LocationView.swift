@@ -26,7 +26,6 @@ struct LocationView: View {
     @State private var coordinates = false
     @State private var pendingLocation: Coordinate?
     @State private var confirmChange = false
-    @State private var confirmRestore = false
     @Environment(\.openURL) private var openURL
     @FocusState private var searchFocused: Bool
 
@@ -56,7 +55,7 @@ struct LocationView: View {
                     map
                     selectionCard
                     if let error = library.error { Text(error).font(.caption).foregroundStyle(.red) }
-                    if model.canConfirmRestored { restoreCard }
+                    if model.awaitingRestoreReading || model.realLocationReceived || model.canConfirmRestored { restoreCard }
                 }.padding(20)
             }
             .background(CatterTheme.background)
@@ -98,14 +97,6 @@ struct LocationView: View {
                 if let coordinate = pendingLocation {
                     Text(String(format: "Send %.5f, %.5f to iOS? This can affect Maps, Find My and other apps. Restore when you are finished.", coordinate.latitude, coordinate.longitude))
                 }
-            }
-            .confirmationDialog("Restore your real location?", isPresented: $confirmRestore, titleVisibility: .visible) {
-                Button("Stop simulation and restore", role: .destructive) {
-                    Task { await model.restore() }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Catter will stop sending the selected location and ask iOS to resume normal location. Other apps may take time to refresh their location and address.")
             }
             .onChange(of: query) { _, _ in
                 results = []
@@ -175,8 +166,6 @@ struct LocationView: View {
     @ViewBuilder private var restoreTools: some View {
         Button("Open Maps", systemImage: "map") { openURL(URL(string: "maps://")!) }
             .buttonStyle(.bordered).controlSize(.large)
-        Button("Position is correct", systemImage: "checkmark") { model.confirmRestored() }
-            .buttonStyle(.bordered).controlSize(.large)
     }
 
     private var searchField: some View {
@@ -229,7 +218,7 @@ struct LocationView: View {
             }.buttonStyle(CatterPrimaryButton()).disabled(model.busy || model.selected == nil)
             Button {
                 searchFocused = false
-                confirmRestore = true
+                Task { await model.restore() }
             } label: {
                 Label(model.restoring ? "Stopping simulation..." : "Restore real location", systemImage: "location.slash")
                     .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 48)

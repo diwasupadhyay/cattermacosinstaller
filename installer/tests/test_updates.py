@@ -17,7 +17,7 @@ class UpdateTests(unittest.TestCase):
                 self.assertEqual(check_update('windows'), expected)
             request = opener.open.call_args.args[0]
             self.assertEqual(request.full_url, 'https://example.test/api/releases')
-            self.assertEqual(request.get_header('User-agent'), 'CatterSetup/0.11.0')
+            self.assertEqual(request.get_header('User-agent'), 'CatterSetup/0.11.3')
             self.assertIsNone(request.data)
             self.assertIsNone(request.get_header('Authorization'))
     def test_large_response_rejected(self):

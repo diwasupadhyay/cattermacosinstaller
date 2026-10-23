@@ -318,7 +318,7 @@ struct SetupView: View {
                     Text(title).font(.system(size: 28, weight: .semibold))
                     page
                     Spacer(minLength: 8)
-                    Text("Apple sign-in stays in memory and is cleared when setup closes.")
+                    Text("Optionally remember sign-in for seven days. Sign out removes saved tokens.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(28).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

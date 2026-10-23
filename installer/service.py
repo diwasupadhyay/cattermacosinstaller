@@ -100,6 +100,12 @@ class InstallerService:
         paths.APP_NAME = namespace
         provision.CERTIFICATE_MACHINE_NAME = SIGNING_NAME
         use_memory_sessions(gsa, paths)
+        from session_vault import SessionVault
+        self.session_vault = SessionVault(self.private)
+        self.saved_session_expiry = None
+        self.session_restore_attempted = False
+        # Inspect expiry on launch even before an iPhone/invitation is available.
+        self.session_vault.load()
         if sys.platform == 'darwin':
             from local_macos_metadata import enable
             self.mac_metadata = enable(gsa)
@@ -128,7 +134,48 @@ class InstallerService:
     def close(self):
         self.access_code = None
         from ipaside_engine import gsa, paths
+        if self.saved_session_expiry:
+            try:
+                import json
+                email = gsa.status().get('email')
+                if email:
+                    self.session_vault.save(json.loads(paths.account_file(email).read_text()),
+                        expires=self.saved_session_expiry, remote=self.remote_metadata_enabled)
+            except Exception:
+                self.session_vault.forget()
         sign_out(gsa, paths)
+
+    def expire_saved_session(self):
+        if self.saved_session_expiry and time.time() >= self.saved_session_expiry:
+            from ipaside_engine import gsa, paths
+            self.session_vault.forget()
+            self.saved_session_expiry = None
+            sign_out(gsa, paths)
+            self.emit('Saved Apple session expired after seven days. Sign in again to install. Preparation remains available.')
+
+    def restore_saved_session(self):
+        if self.session_restore_attempted:
+            return
+        self.session_restore_attempted = True
+        data = self.session_vault.load()
+        if not data:
+            return
+        from ipaside_engine import gsa, paths
+        if data.get('remote'):
+            if not self.ask_phone_step('Reuse saved Apple session?',
+                'This session used mac-ani.jkcoxson.com for authentication metadata. Reusing it enables that provider for this setup session. '
+                'It receives a random identifier, provisioning blobs and your IP address, never Apple account tokens, passwords or verification codes. '
+                'Cancel to sign in locally instead.'):
+                return
+            from remote_anisette import enable
+            self.mac_metadata = enable(gsa, consent=True)
+            self.remote_metadata_enabled = True
+        import json
+        account = data['account']
+        paths.account_file(account['email']).write_text(json.dumps(account))
+        paths.active_account_file().write_text(json.dumps({'email': account['email']}))
+        self.saved_session_expiry = data['expires']
+        self.emit('Saved Apple session loaded securely. Apple may still require a new sign-in if it has expired or been revoked.')
 
     def choose_certificate(self, certificates):
         answer, ready = [], threading.Event()
@@ -192,6 +239,9 @@ class InstallerService:
             self.emit('Invitation verified and remembered securely for this iPhone.')
         else:
             self.emit('Invitation verified. Secure storage was unavailable; enter it again next time.')
+        if hasattr(self, "session_vault"):
+            self.expire_saved_session()
+            self.restore_saved_session()
 
     def restore_access(self):
         try:
@@ -213,6 +263,9 @@ class InstallerService:
             from ipaside_engine import gsa
             self.emit('Signing in directly to Apple. First-time device authentication can take a few minutes...')
             try:
+                self.session_vault.forget()
+                self.saved_session_expiry = None
+                self.session_restore_attempted = True
                 gsa._clear_pending()
                 with authentication_stages(gsa):
                     result = gsa.begin_login(email, password)
@@ -237,6 +290,22 @@ class InstallerService:
                         code = ''
                 if result.get('status') != 'authenticated':
                     raise RuntimeError('Apple sign-in did not finish.')
+                if gsa.status().get('authenticated'):
+                    self.session_restore_attempted = True
+                    self.session_vault.forget()
+                    self.saved_session_expiry = None
+                    if self.ask_phone_step('Remember sign-in for up to seven days?',
+                        'Save Apple session tokens encrypted on this computer, with the key in Windows Credential Manager or macOS Keychain. '
+                        'Your password and verification code are not saved. Sign out removes the saved session. '
+                        'It expires after seven days; stored data is deleted when setup next opens, or while it is running. '
+                        'Apple may require sign-in sooner. This does not remove devices from your Apple Account. Cancel keeps this sign-in in memory only.'):
+                        try:
+                            import json
+                            from ipaside_engine import paths
+                            self.saved_session_expiry = self.session_vault.save(
+                                json.loads(paths.account_file(email).read_text()), remote=self.remote_metadata_enabled)
+                        except Exception:
+                            self.emit('Secure session storage was unavailable. This sign-in will be cleared when setup closes.')
                 self.emit('Signed in. Click Continue to choose your IPA.')
             except Exception as error:
                 clear = getattr(gsa, '_catter_clear_session', None)
@@ -250,7 +319,7 @@ class InstallerService:
                         'Local Apple authentication could not finish. An optional remote Mac metadata provider may help.\n\n'
                         'mac-ani.jkcoxson.com receives a random device identifier, provisioning blobs and your IP address. '
                         'Your Apple email, password, verification code, account token and signing key are never sent to it. '
-                        'Apple may list this sign-in as a Mac device in your account. Closing setup clears local session data but does not remove that Apple Account entry. '
+                        'Apple may list this sign-in as a Mac device in your account. Closing setup clears in-memory data; an optionally saved session remains encrypted until expiry or Sign out. This does not remove that Apple Account entry. '
                         'Metadata is kept only while setup is open.\n\n'
                         'Continue enables this provider for this session. Then sign in again. Cancel keeps local authentication.'):
                         from remote_anisette import enable
@@ -387,7 +456,11 @@ class InstallerService:
         def run():
             self.access_code = None
             from ipaside_engine import gsa, paths
+            self.session_vault.forget()
+            self.saved_session_expiry = None
+            self.session_restore_attempted = True
             sign_out(gsa, paths)
             self.events.put(('signed_out', None))
             self.emit('Signed out. Local account tokens and pending verification sessions were removed and checked. Signing certificates and phone pairing are retained; Apple decides whether the next sign-in needs a code.')
         self.work(run)
+

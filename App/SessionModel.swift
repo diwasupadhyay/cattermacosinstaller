@@ -280,6 +280,7 @@ final class SessionModel: ObservableObject {
         if simulated == false {
             awaitingRestoreReading = false
             realLocationReceived = true
+            markUnresolved(false)
         }
         if simulated == true {
             status = "iOS still reports a simulated location. Try Restore again."

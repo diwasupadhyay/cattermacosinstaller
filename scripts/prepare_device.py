@@ -136,7 +136,7 @@ async def prepare(args):
             if await container.exists(preferences):
                 prefs = plistlib.loads(await container.get_file_contents(preferences))
                 if prefs.get('simulationUnresolved'):
-                    raise RuntimeError('Restore in Catter and confirm your real location before preparing it again.')
+                    raise RuntimeError('Catter still reports an unresolved simulation. Open Catter, tap Restore and wait for a fresh real location. In older app versions, tap Position is correct after checking Maps. Then retry preparation.')
             existing = await container.get_file_contents(REMOTE_FILE) if await container.exists(REMOTE_FILE) else None
             if existing:
                 validate_record(existing)

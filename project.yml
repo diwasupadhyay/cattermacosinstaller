@@ -26,8 +26,8 @@ targets:
         HEADER_SEARCH_PATHS: '$(SRCROOT)/Vendor/idevice/ffi'
         LIBRARY_SEARCH_PATHS: '$(SRCROOT)/Vendor/idevice/target/aarch64-apple-ios/release'
         OTHER_LDFLAGS: ['$(inherited)', '$(SRCROOT)/Vendor/idevice/target/aarch64-apple-ios/release/libidevice_ffi.a', '-framework', Security, '-framework', SystemConfiguration, '-lresolv', '-liconv', '-lc++']
-        MARKETING_VERSION: '0.11.2'
-        CURRENT_PROJECT_VERSION: '27'
+        MARKETING_VERSION: '0.11.3'
+        CURRENT_PROJECT_VERSION: '28'
         GENERATE_INFOPLIST_FILE: YES
         CATTER_ACCESS_URL: https://catter-access.catter-access.workers.dev
         CATTER_SUPPORT_URL: https://github.com/diwasupadhyay/catter/blob/main/README.md

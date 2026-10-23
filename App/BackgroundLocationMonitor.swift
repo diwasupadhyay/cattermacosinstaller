@@ -37,6 +37,10 @@ final class BackgroundLocationMonitor: NSObject, ObservableObject, CLLocationMan
         verification?.cancel()
         sampleRequestedAt = Date()
         let authorization = manager.authorizationStatus
+        if authorization == .notDetermined {
+            manager.requestWhenInUseAuthorization()
+            return
+        }
         if authorization == .authorizedWhenInUse || authorization == .authorizedAlways {
             manager.startUpdatingLocation()
             verification = Task { [weak self] in
@@ -124,7 +128,12 @@ final class BackgroundLocationMonitor: NSObject, ObservableObject, CLLocationMan
         }
     }
 
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) { update() }
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        if sampleRequestedAt != nil && verification == nil && manager.authorizationStatus != .notDetermined {
+            sampleAfterRestore()
+        }
+        update()
+    }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last, location.horizontalAccuracy >= 0 else { return }

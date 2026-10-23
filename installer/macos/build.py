@@ -95,7 +95,7 @@ run('clang', '-fobjc-arc', '-framework', 'Foundation', '-framework', 'IOKit',
     '-mmacosx-version-min=13.0', ROOT / 'installer/macos/LocalMetadata.m',
     '-o', backend / 'native/catter-local-metadata')
 
-for name in ('backend.py', 'service.py', 'access.py', 'branding.py', 'core.py', 'account_security.py', 'certificates.py', 'renewal.py', 'local_macos_metadata.py', 'remote_anisette.py', 'invitation_store.py'):
+for name in ('backend.py', 'service.py', 'access.py', 'branding.py', 'core.py', 'account_security.py', 'certificates.py', 'renewal.py', 'local_macos_metadata.py', 'remote_anisette.py', 'invitation_store.py', 'session_vault.py'):
     shutil.copy2(ROOT / 'installer' / name, backend / name)
 run(sys.executable, ROOT / 'scripts/configure_access.py', backend)
 (backend / 'scripts').mkdir()
@@ -122,7 +122,7 @@ with (app / 'Contents/Info.plist').open('wb') as stream:
         'CFBundleIdentifier': 'com.diwasupadhyay.catter.setup',
         'CFBundleName': 'Catter Setup', 'CFBundleDisplayName': 'Catter Setup',
         'CFBundleExecutable': 'CatterSetup', 'CFBundlePackageType': 'APPL',
-        'CFBundleShortVersionString': '0.11.2', 'CFBundleVersion': '34',
+        'CFBundleShortVersionString': '0.11.3', 'CFBundleVersion': '35',
         'CFBundleIconFile': 'Catter.icns', 'LSMinimumSystemVersion': '15.0',
         'NSHighResolutionCapable': True,
         'NSLocalNetworkUsageDescription': 'Connect to your iPhone to install and prepare Catter.',

@@ -77,6 +77,9 @@ def main():
                 command = {}
             if not command.get('op') and time.monotonic() >= next_access_check and not app.working:
                 next_access_check = time.monotonic() + 45
+                if hasattr(app, 'expire_saved_session'):
+                    app.expire_saved_session()
+                    state()
                 if (app.access_code or restore_pending) and hasattr(app, 'restore_access'):
                     restore_pending = False
                     app.work(app.restore_access)

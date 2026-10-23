@@ -96,7 +96,7 @@ private struct SettingsDetailView: View {
                 Section("Renewal") {
                     NavigationLink("Renew Catter on this iPhone") { RenewalView() }
                         .disabled(model.busy || model.unresolved)
-                    if model.unresolved { Text("Restore and confirm your real location before renewing.").font(.caption) }
+                    if model.unresolved { Text("Restore and wait for a fresh real-location reading before renewing.").font(.caption) }
                 }
                 }
                 if page == .connection {

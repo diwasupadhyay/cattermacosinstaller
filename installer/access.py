@@ -58,7 +58,7 @@ def authorize(code, installer_device):
         raise RuntimeError('Access could not be verified. Check your internet connection and retry.') from None
 
 
-INSTALLER_VERSION = '0.11.0'
+INSTALLER_VERSION = '0.11.3'
 DOWNLOAD_URL = 'https://github.com/diwasupadhyay/catter/releases/latest'
 
 
