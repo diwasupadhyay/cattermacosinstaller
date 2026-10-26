@@ -8,6 +8,7 @@ import Foundation
 final class BackgroundLocationMonitor: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published private(set) var enabled = false
     @Published private(set) var running = false
+    @Published private(set) var permission = "Not requested"
     @Published private(set) var message = "Off"
     @Published private(set) var observation: String?
     @Published private(set) var restoredCoordinate: Coordinate?
@@ -68,6 +69,17 @@ final class BackgroundLocationMonitor: NSObject, ObservableObject, CLLocationMan
         manager.showsBackgroundLocationIndicator = true
     }
 
+    func requestAlwaysAccess() {
+        // Explicit user action only; iOS controls whether and when prompts appear.
+        if manager.authorizationStatus == .notDetermined {
+            manager.requestWhenInUseAuthorization()
+            message = "Allow While Using first, then request Always access here."
+        } else if manager.authorizationStatus == .authorizedWhenInUse {
+            manager.requestAlwaysAuthorization()
+            message = "Choose Always if offered, or change Location access in Catter's iPhone Settings."
+        }
+    }
+
     func setEnabled(_ value: Bool) {
         enabled = value
         UserDefaults.standard.set(value, forKey: "backgroundMonitoringEnabled")
@@ -100,6 +112,13 @@ final class BackgroundLocationMonitor: NSObject, ObservableObject, CLLocationMan
 
     private func update() {
         let authorization = manager.authorizationStatus
+        switch authorization {
+        case .authorizedAlways: permission = "Always"
+        case .authorizedWhenInUse: permission = "While Using"
+        case .denied: permission = "Denied"
+        case .restricted: permission = "Restricted"
+        default: permission = "Not requested"
+        }
         let allowed = authorization == .authorizedWhenInUse || authorization == .authorizedAlways
         if enabled && sessionActive && allowed {
             if backgroundSession == nil { backgroundSession = CLBackgroundActivitySession() }

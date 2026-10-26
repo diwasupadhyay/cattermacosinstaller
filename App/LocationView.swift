@@ -255,7 +255,7 @@ struct LocationView: View {
                 confirmChange = pendingLocation != nil
             } label: {
                 Label(model.busy && !model.refreshing ? "Working..." : "Set location", systemImage: "location.fill")
-            }.buttonStyle(CatterPrimaryButton()).disabled(model.busy || model.selected == nil)
+            }.buttonStyle(CatterPrimaryButton()).disabled(model.userActionBusy || model.selected == nil)
             Button {
                 searchFocused = false
                 Task { await model.restore() }
@@ -275,7 +275,7 @@ struct LocationView: View {
                 Image(systemName: statusSymbol).foregroundStyle(statusColor)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(model.statusTitle).font(.subheadline.weight(.semibold))
-                    Text(model.refreshing ? (model.backgroundUpdatesAllowed ? "Background monitoring on" : "Background monitoring off") : "Tap for session details")
+                    Text(model.refreshing ? model.motionSummary : "Tap for session details")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)

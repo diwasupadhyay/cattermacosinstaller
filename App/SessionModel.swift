@@ -30,6 +30,12 @@ final class SessionModel: ObservableObject {
     private var loop: Task<Void, Never>?
     private var generation = 0
     private var foreground = true
+    private var motion: RandomMotion?
+    private var motionAnchor: Coordinate?
+    private var nextMotionUptime: TimeInterval = 0
+    @Published private(set) var motionSummary = "Fixed location"
+    var userActionBusy: Bool { busy && !refreshing }
+
     private var lastSuccessfulUpdateUptime: TimeInterval?
     private var maySendUpdates: Bool { foreground || backgroundUpdatesAllowed }
     var canConfirmRestored: Bool { unresolved && !busy && !refreshing && lastSent == nil }
@@ -107,6 +113,7 @@ final class SessionModel: ObservableObject {
     }
 
     private func stopLoop() {
+        if refreshing { busy = false }
         generation += 1
         loop?.cancel()
         loop = nil
@@ -156,7 +163,7 @@ final class SessionModel: ObservableObject {
     }
 
     func start() async {
-        guard !busy else { return }
+        guard !busy || refreshing else { return }
         guard installationInProgress?() != true else {
             failure = "Catter is renewing. Wait until renewal finishes before changing location."
             return
@@ -189,6 +196,16 @@ final class SessionModel: ObservableObject {
             lastSuccessfulUpdateUptime = ProcessInfo.processInfo.systemUptime
             locationSent?(coordinate)
             lastSent = coordinate
+            motionAnchor = coordinate
+            let defaults = UserDefaults.standard
+            motion = defaults.bool(forKey: "motionEnabled") ? RandomMotion(
+                minimum: defaults.object(forKey: "motionMinimum") as? Double ?? 5,
+                maximum: defaults.object(forKey: "motionMaximum") as? Double ?? 10,
+                interval: defaults.object(forKey: "motionInterval") as? Double ?? 60) : nil
+            if let motion {
+                motionSummary = "Random motion: \(Int(motion.minimum))-\(Int(motion.maximum)) m every \(Int(motion.interval)) s"
+                nextMotionUptime = ProcessInfo.processInfo.systemUptime + motion.interval
+            } else { motionSummary = "Fixed location" }
             sessionNeedsCheck = false
             failure = nil
             guard foreground, token == generation else {
@@ -213,12 +230,17 @@ final class SessionModel: ObservableObject {
                 sendImmediately = false
                 guard let self, self.maySendUpdates, self.generation == token, self.connected else { return }
                 if self.busy { continue }
-                guard let coordinate = self.lastSent else { return }
+                guard var coordinate = self.lastSent else { return }
+                let now = ProcessInfo.processInfo.systemUptime
+                let moving = self.motion != nil && now >= self.nextMotionUptime
+                if moving, let motion = self.motion, let anchor = self.motionAnchor {
+                    coordinate = motion.next(from: anchor)
+                }
+                let destination = coordinate
                 self.busy = true
                 do { try await AccessManager.shared.requireAccess() }
                 catch {
                     guard self.generation == token else {
-                        if !self.restoring { self.busy = false }
                         return
                     }
                     self.stopLoop()
@@ -229,13 +251,16 @@ final class SessionModel: ObservableObject {
                 }
                 do {
                     guard self.generation == token, self.maySendUpdates else {
-                        if !self.restoring { self.busy = false }
                         return
                     }
-                    try await self.perform { [client = self.client] in try client.set(coordinate) }
+                    try await self.perform { [client = self.client] in try client.set(destination) }
                     guard self.generation == token else {
-                        if !self.restoring { self.busy = false }
                         return
+                    }
+                    self.lastSent = destination
+                    if moving, let motion = self.motion {
+                        // Schedule from completion; never catch up missed background ticks.
+                        self.nextMotionUptime = ProcessInfo.processInfo.systemUptime + motion.interval
                     }
                     let wasChecking = self.sessionNeedsCheck
                     self.sessionNeedsCheck = false
@@ -247,7 +272,6 @@ final class SessionModel: ObservableObject {
                     }
                 } catch {
                     guard self.generation == token else {
-                        if !self.restoring { self.busy = false }
                         return
                     }
                     self.operationFailed(error)
@@ -264,6 +288,9 @@ final class SessionModel: ObservableObject {
         awaitingRestoreReading = false
         realLocationReceived = false
         restoring = true
+        motion = nil
+        motionAnchor = nil
+        motionSummary = "Fixed location"
         stopLoop()
         busy = true
         status = "Stopping simulation…"

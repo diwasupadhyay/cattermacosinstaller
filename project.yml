@@ -26,8 +26,8 @@ targets:
         HEADER_SEARCH_PATHS: '$(SRCROOT)/Vendor/idevice/ffi'
         LIBRARY_SEARCH_PATHS: '$(SRCROOT)/Vendor/idevice/target/aarch64-apple-ios/release'
         OTHER_LDFLAGS: ['$(inherited)', '$(SRCROOT)/Vendor/idevice/target/aarch64-apple-ios/release/libidevice_ffi.a', '-framework', Security, '-framework', SystemConfiguration, '-lresolv', '-liconv', '-lc++']
-        MARKETING_VERSION: '0.11.4'
-        CURRENT_PROJECT_VERSION: '29'
+        MARKETING_VERSION: '0.12.0'
+        CURRENT_PROJECT_VERSION: '30'
         GENERATE_INFOPLIST_FILE: YES
         CATTER_ACCESS_URL: https://catter-access.catter-access.workers.dev
         CATTER_SUPPORT_URL: https://github.com/diwasupadhyay/catter/blob/main/README.md
@@ -42,6 +42,7 @@ targets:
         NSBonjourServices: ["_remotepairing-pairable-host._tcp"]
         NSLocalNetworkUsageDescription: Connect to this iPhone's developer service through LocalDevVPN.
         NSLocationWhenInUseUsageDescription: Observe the location reported by iOS and continue the active simulation session in the background when you enable monitoring. No location history is saved or uploaded.
+        NSLocationAlwaysAndWhenInUseUsageDescription: Continue your active location simulation and optional random movement while Catter is in the background. Stop with Restore. Observed location readings are not saved or uploaded.
         UIBackgroundModes: [location, processing]
         BGTaskSchedulerPermittedIdentifiers: [com.diwasupadhyay.catter.renewal]
         UIFileSharingEnabled: false

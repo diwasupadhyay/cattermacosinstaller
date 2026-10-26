@@ -2,12 +2,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 private enum SettingsPage: String, Identifiable {
-    case account, connection, updates, help
+    case account, connection, motion, updates, help
     var id: String { rawValue }
     var title: String {
         switch self {
         case .account: return "Access & signing"
         case .connection: return "Connection"
+        case .motion: return "Random movement"
         case .updates: return "Updates"
         case .help: return "Help & diagnostics"
         }
@@ -33,6 +34,7 @@ struct SetupView: View {
                 }
                 Section("Your iPhone") {
                     destination(.connection, icon: "network", subtitle: model.pairingAvailable ? "VPN, pairing and background updates" : "Prepare this iPhone to get started")
+                    destination(.motion, icon: "arrow.triangle.swap", subtitle: "Small movements around your selected location")
                     destination(.account, icon: "checkmark.shield", subtitle: "Invitation, signing expiry and renewal")
                 }
                 Section("About & support") {
@@ -77,9 +79,32 @@ private struct SettingsDetailView: View {
     @ObservedObject private var access = AccessManager.shared
     @ObservedObject private var updates = UpdateManager.shared
     @State private var vpnStorePrompt = false
+    @AppStorage("motionEnabled") private var motionEnabled = false
+    @AppStorage("motionMinimum") private var motionMinimum = 5.0
+    @AppStorage("motionMaximum") private var motionMaximum = 10.0
+    @AppStorage("motionInterval") private var motionInterval = 60.0
+
 
     var body: some View {
         Form {
+                if page == .motion {
+                    Section {
+                        Toggle("Random movement", isOn: $motionEnabled)
+                        Text("Choose a new point around the location you set. Movements stay inside this range from that original point.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Section("Movement range") {
+                        Stepper("Minimum: \(Int(motionMinimum)) metres", value: $motionMinimum, in: 0...motionMaximum)
+                        Stepper("Maximum: \(Int(motionMaximum)) metres", value: $motionMaximum, in: motionMinimum...100)
+                        Stepper("Every \(Int(motionInterval)) seconds", value: $motionInterval, in: 15...3600, step: 15)
+                        Button("Use 5-10 m every minute") { motionMinimum = 5; motionMaximum = 10; motionInterval = 60 }
+                    }.disabled(!motionEnabled)
+                    Section("How it works") {
+                        Text("Changes apply the next time you tap Set location. Restore stops both movement and simulation.")
+                        Text("Turn on Background location updates in Connection to request movement while locked. iOS may pause the app; missed movements are skipped, and timing is approximate.")
+                        Text(model.motionSummary).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 if page == .account {
                 Section("Your access") {
                     ActivationFields(disabled: model.busy)
@@ -136,6 +161,11 @@ private struct SettingsDetailView: View {
                 Section {
                     Toggle("Background location updates", isOn: Binding(
                         get: { monitor.enabled }, set: { monitor.setEnabled($0) }))
+                    LabeledContent("Location permission", value: monitor.permission)
+                    if monitor.permission != "Always" {
+                        Button("Request Always location access") { monitor.requestAlwaysAccess() }
+                    }
+                    Button("Open Catter location settings") { openURL(URL(string: UIApplication.openSettingsURLString)!) }
                     if monitor.enabled { Text(monitor.message).font(.caption) }
                 } footer: {
                     Text("Uses location permission and more battery. iOS can still interrupt the session.")
@@ -154,6 +184,16 @@ private struct SettingsDetailView: View {
                 }
                 }
                 if page == .help {
+                Section("iPhone settings") {
+                    Button("Open Catter settings") { openURL(URL(string: UIApplication.openSettingsURLString)!) }
+                    DisclosureGroup("Find Developer Mode") {
+                        Text("Open Settings > Privacy & Security > Developer Mode. iOS does not provide a supported direct link to this page.")
+                    }
+                    DisclosureGroup("Find My settings") {
+                        Text("Open Settings > your name > Find My. To check your current position, open the Find My app. Catter cannot change Find My's settings.")
+                    }
+                }
+
                 Section {
                     DisclosureGroup("First-time setup") { preparation }
                     DisclosureGroup("Using mobile data") {

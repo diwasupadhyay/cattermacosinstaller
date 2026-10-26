@@ -171,6 +171,7 @@ final class DVTClient {
             try await Task.sleep(nanoseconds: 100_000_000)
         }
         precondition(entered && model.busy && model.refreshing)
+        precondition(!model.userActionBusy, "Periodic refresh must not dim the Set location button")
         let urgentRestore = Task { await model.restore() }
         try await Task.sleep(nanoseconds: 100_000_000)
         precondition(model.restoring && !model.refreshing, "Restore must cancel refresh immediately even during a send")
@@ -189,6 +190,29 @@ final class DVTClient {
                      "Restore must remain available after access expires")
         model.confirmRestored()
         AccessManager.shared.denied = false
+        let defaults = UserDefaults.standard
+        defaults.set(true, forKey: "motionEnabled")
+        defaults.set(5.0, forKey: "motionMinimum")
+        defaults.set(10.0, forKey: "motionMaximum")
+        defaults.set(15.0, forKey: "motionInterval")
+        defer {
+            for key in ["motionEnabled", "motionMinimum", "motionMaximum", "motionInterval"] { defaults.removeObject(forKey: key) }
+        }
+        let anchor = try Coordinate(latitude: 10, longitude: 20)
+        model.select(anchor)
+        await model.start()
+        model.setBackgroundUpdatesAllowed(true)
+        model.enteredBackground()
+        try await Task.sleep(nanoseconds: 17_000_000_000)
+        precondition(model.lastSent != anchor && model.failure == nil, "Motion should use the running background session")
+        precondition(model.selected == anchor, "Motion must not move the selected anchor")
+        model.enteredForeground()
+        await model.restore()
+        precondition(model.lastSent == nil && model.motionSummary == "Fixed location")
+        let motionStopped = DVTClient.sends
+        try await Task.sleep(nanoseconds: 4_300_000_000)
+        precondition(DVTClient.sends == motionStopped, "Restore must stop random movement")
+        model.restorationReading(simulated: false)
         PairingStore.isAvailable = false
         let missing = SessionModel()
         missing.select(try Coordinate(latitude: 0.0, longitude: 0.0))
