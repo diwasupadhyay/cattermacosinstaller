@@ -37,6 +37,7 @@ final class BackgroundLocationMonitor: NSObject, ObservableObject, CLLocationMan
         restoredAccuracy = nil
         verification?.cancel()
         sampleRequestedAt = Date()
+        manager.desiredAccuracy = kCLLocationAccuracyBest
         let authorization = manager.authorizationStatus
         if authorization == .notDetermined {
             manager.requestWhenInUseAuthorization()
@@ -45,12 +46,12 @@ final class BackgroundLocationMonitor: NSObject, ObservableObject, CLLocationMan
         if authorization == .authorizedWhenInUse || authorization == .authorizedAlways {
             manager.startUpdatingLocation()
             verification = Task { [weak self] in
-                do { try await Task.sleep(nanoseconds: 15_000_000_000) } catch { return }
+                do { try await Task.sleep(nanoseconds: 45_000_000_000) } catch { return }
                 guard let self else { return }
                 self.manager.stopUpdatingLocation()
                 self.sampleRequestedAt = nil
                 self.verification = nil
-                self.restorationUnavailable?("No fresh normal location was confirmed yet. Check Location Services and verify your position in Maps. Find My may refresh its address separately.")
+                self.restorationUnavailable?("Simulation stopped, but iOS has not supplied an accurate real location yet. Check location permission, then retry the location check.")
             }
         } else {
             sampleRequestedAt = nil

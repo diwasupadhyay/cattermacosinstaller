@@ -14,6 +14,14 @@ struct LocationView: View {
     var openPlaces: () -> Void
     var openSettings: () -> Void
     @State private var showDetails = false
+    @State private var showMovement = false
+    @State private var editingRoute = false
+    @State private var routePins: [Coordinate] = []
+    @State private var pendingRoute: [Coordinate] = []
+    @State private var movementSpeed = 1.4
+    @State private var pendingSpeed = 1.4
+    @StateObject private var movementPairing = OnDevicePairing()
+
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var savePlace = false
     @State private var placeName = ""
@@ -80,6 +88,40 @@ struct LocationView: View {
                         .accessibilityLabel("Settings and setup")
                 }
             }
+            .sheet(isPresented: $showMovement) {
+                NavigationStack {
+                    Form {
+                        Section("Route pins") {
+                            Text("\(routePins.count) pins. Tap the map to add pins in order. Segments are straight lines, not road directions.")
+                            Button(editingRoute ? "Continue placing pins" : "Place pins on map") { editingRoute = true; showMovement = false }
+                                .disabled(model.userActionBusy || model.movementActive)
+                            Button("Undo last pin") { if !routePins.isEmpty { routePins.removeLast() } }.disabled(routePins.isEmpty)
+                            Button("Clear route", role: .destructive) { routePins = [] }.disabled(routePins.isEmpty)
+                            Slider(value: $movementSpeed, in: 0.5...10, step: 0.1)
+                            Text(String(format: "Speed: %.1f m/s (%.1f km/h)", movementSpeed, movementSpeed * 3.6))
+                            Button("Start route") {
+                                pendingRoute = routePins; pendingSpeed = movementSpeed
+                                pendingLocation = routePins.first
+                                editingRoute = false; showMovement = false
+                            }.disabled(routePins.count < 2 || model.userActionBusy || model.movementActive)
+                        }
+                        Section("Random movement") {
+                            NavigationLink("Configure random movement") {
+                                SettingsDetailView(page: .motion, model: model, monitor: monitor, pairing: movementPairing)
+                            }
+                            Text("Enable random movement in its settings, then use Set location. Movement interpolates toward each random target.").font(.caption)
+                        }
+                        Section {
+                            if model.movementActive { Button("Stop movement; hold position") { model.stopMovement() } }
+                            Text("Background movement depends on iOS allowing execution. Restore stops all movement and requests your real location.").font(.caption)
+                        }
+                    }.navigationTitle("Movement").navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showMovement = false } } }
+                }
+            }
+            .onChange(of: showMovement) { _, visible in
+                if !visible && !pendingRoute.isEmpty { confirmChange = true }
+            }
             .sheet(isPresented: $showDetails) {
                 NavigationStack {
                     List {
@@ -125,18 +167,26 @@ struct LocationView: View {
                     guard let coordinate = pendingLocation else { return }
                     model.select(coordinate)
                     let name = selectedName
+                    let route = pendingRoute, speed = pendingSpeed
                     Task {
                         model.locationSent = { sent in library.record(sent, name: name) }
-                        await model.start()
+                        await model.start(route: route, speed: speed)
+                        pendingRoute = []
                         model.locationSent = nil
                     }
                     pendingLocation = nil
                 }
-                Button("Cancel", role: .cancel) { pendingLocation = nil }
+                Button("Cancel", role: .cancel) { pendingLocation = nil; pendingRoute = [] }
             } message: {
                 if let coordinate = pendingLocation {
                     Text(String(format: "Send %.5f, %.5f to iOS? This can affect Maps, Find My and other apps. Restore when you are finished.", coordinate.latitude, coordinate.longitude))
                 }
+            }
+            .onChange(of: monitor.restoredCoordinate) { _, coordinate in
+                guard let coordinate else { return }
+                model.select(coordinate)
+                selectedName = "Current location"
+                withAnimation { camera = .region(.init(center: coordinate.mapCoordinate, span: .init(latitudeDelta: 0.005, longitudeDelta: 0.005))) }
             }
             .onChange(of: query) { _, _ in
                 results = []
@@ -184,12 +234,12 @@ struct LocationView: View {
 
     private var restoreCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label(model.realLocationReceived ? "Fresh location received" : "Check your real location",
+            Label(model.realLocationReceived ? "Real location restored" : model.awaitingRestoreReading ? "Finding your real location" : "Location reading unavailable",
                   systemImage: model.realLocationReceived ? "checkmark.circle.fill" : "location.circle")
                 .font(.headline)
             Text(model.awaitingRestoreReading
                  ? "Simulation has stopped. Waiting for iOS to report a fresh location."
-                 : "Check your position in Maps. Find My and address labels may update later.")
+                 : model.realLocationReceived ? "The map now shows the fresh real location reported by iOS." : "Simulation is stopped. Allow location access and retry the automatic check.")
                 .font(.subheadline).foregroundStyle(.secondary)
             if model.realLocationReceived, let accuracy = monitor.restoredAccuracy {
                 Text("Reported accuracy: about \(Int(accuracy.rounded())) m")
@@ -204,6 +254,10 @@ struct LocationView: View {
     }
 
     @ViewBuilder private var restoreTools: some View {
+        if !model.realLocationReceived {
+            Button("Retry location check", systemImage: "arrow.clockwise") { model.retryRestoreCheck() }
+                .buttonStyle(.bordered).disabled(model.awaitingRestoreReading || model.restoring)
+        }
         Button("Open Maps", systemImage: "map") { openURL(URL(string: "maps://")!) }
             .buttonStyle(.bordered).controlSize(.large)
     }
@@ -249,8 +303,18 @@ struct LocationView: View {
 
     private var actions: some View {
         VStack(spacing: 8) {
+            HStack {
+                Button("Movement", systemImage: "point.topleft.down.to.point.bottomright.curvepath") { searchFocused = false; showMovement = true }
+                Spacer()
+                if model.movementActive {
+                    Button("Stop movement") { model.stopMovement() }.disabled(model.userActionBusy)
+                } else if editingRoute {
+                    Button("Done (\(routePins.count) pins)") { editingRoute = false; showMovement = true }
+                }
+            }.font(.subheadline).buttonStyle(.bordered)
             Button {
                 searchFocused = false
+                pendingRoute = []
                 pendingLocation = model.selected
                 confirmChange = pendingLocation != nil
             } label: {
@@ -302,6 +366,15 @@ struct LocationView: View {
     private var map: some View {
         MapReader { proxy in
             Map(position: $camera) {
+                if routePins.count > 1 { MapPolyline(coordinates: routePins.map(\.mapCoordinate)).stroke(.blue, lineWidth: 4) }
+                ForEach(Array(routePins.enumerated()), id: \.offset) { index, point in
+                    Marker("Pin \(index + 1)", coordinate: point.mapCoordinate).tint(.blue)
+                }
+                if let real = monitor.restoredCoordinate, model.realLocationReceived {
+                    Annotation("Current location", coordinate: real.mapCoordinate) {
+                        Image(systemName: "location.circle.fill").font(.title).foregroundStyle(.blue).background(.white, in: Circle())
+                    }
+                }
                 if let selected = model.selected { Marker("Selected", coordinate: selected.mapCoordinate).tint(CatterTheme.accent) }
                 if let sent = model.lastSent, sent != model.selected {
                     Marker("Last sent", systemImage: "paperplane.fill", coordinate: sent.mapCoordinate).tint(.orange)
@@ -310,7 +383,11 @@ struct LocationView: View {
             .mapStyle(.standard)
             .mapControls { MapCompass(); MapScaleView() }
             .onTapGesture { point in
-                if let coordinate = proxy.convert(point, from: .local) { choose(coordinate, recenter: false) }
+                if let coordinate = proxy.convert(point, from: .local) {
+                    if editingRoute {
+                        if routePins.count < 64, let pin = try? Coordinate(latitude: coordinate.latitude, longitude: coordinate.longitude) { routePins.append(pin) }
+                    } else { choose(coordinate, recenter: false) }
+                }
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }

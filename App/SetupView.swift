@@ -1,7 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-private enum SettingsPage: String, Identifiable {
+enum SettingsPage: String, Identifiable {
     case account, connection, motion, updates, help
     var id: String { rawValue }
     var title: String {
@@ -68,7 +68,7 @@ struct SetupView: View {
     }
 }
 
-private struct SettingsDetailView: View {
+struct SettingsDetailView: View {
     let page: SettingsPage
     @ObservedObject var model: SessionModel
     @ObservedObject var monitor: BackgroundLocationMonitor

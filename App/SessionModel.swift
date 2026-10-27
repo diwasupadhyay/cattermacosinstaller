@@ -31,6 +31,20 @@ final class SessionModel: ObservableObject {
     private var generation = 0
     private var foreground = true
     private var motion: RandomMotion?
+    private var path: MovementPath?
+    private var pathSpeed = 1.4
+    private var movementUptime: TimeInterval?
+    private var routeMode = false
+    @Published private(set) var movementActive = false
+
+    func stopMovement() {
+        guard !userActionBusy else { return }
+        stopLoop()
+        motion = nil; path = nil; routeMode = false; movementActive = false
+        motionSummary = "Holding current location"
+        if connected && lastSent != nil { beginLoop(immediate: true) }
+    }
+
     private var motionAnchor: Coordinate?
     private var nextMotionUptime: TimeInterval = 0
     @Published private(set) var motionSummary = "Fixed location"
@@ -162,7 +176,7 @@ final class SessionModel: ObservableObject {
         status = unresolved ? "Connection interrupted. Location may still be simulated." : "Could not connect — check Settings"
     }
 
-    func start() async {
+    func start(route: [Coordinate] = [], speed: Double = 1.4) async {
         guard !busy || refreshing else { return }
         guard installationInProgress?() != true else {
             failure = "Catter is renewing. Wait until renewal finishes before changing location."
@@ -202,7 +216,14 @@ final class SessionModel: ObservableObject {
                 minimum: defaults.object(forKey: "motionMinimum") as? Double ?? 5,
                 maximum: defaults.object(forKey: "motionMaximum") as? Double ?? 10,
                 interval: defaults.object(forKey: "motionInterval") as? Double ?? 60) : nil
-            if let motion {
+            path = route.count >= 2 ? MovementPath(points: route) : nil
+            routeMode = path != nil
+            pathSpeed = speed.isFinite ? min(10, max(0.5, speed)) : 1.4
+            movementUptime = ProcessInfo.processInfo.systemUptime
+            if routeMode { motion = nil }
+            movementActive = routeMode || motion != nil
+            if routeMode { motionSummary = "Following route" }
+            else if let motion {
                 motionSummary = "Random motion: \(Int(motion.minimum))-\(Int(motion.maximum)) m every \(Int(motion.interval)) s"
                 nextMotionUptime = ProcessInfo.processInfo.systemUptime + motion.interval
             } else { motionSummary = "Fixed location" }
@@ -225,7 +246,7 @@ final class SessionModel: ObservableObject {
             var sendImmediately = immediate
             while !Task.isCancelled {
                 if !sendImmediately {
-                    do { try await Task.sleep(nanoseconds: 4_000_000_000) } catch { return }
+                    do { try await Task.sleep(nanoseconds: self?.movementActive == true ? 1_000_000_000 : 4_000_000_000) } catch { return }
                 }
                 sendImmediately = false
                 guard let self, self.maySendUpdates, self.generation == token, self.connected else { return }
@@ -234,8 +255,20 @@ final class SessionModel: ObservableObject {
                 let now = ProcessInfo.processInfo.systemUptime
                 let moving = self.motion != nil && now >= self.nextMotionUptime
                 if moving, let motion = self.motion, let anchor = self.motionAnchor {
-                    coordinate = motion.next(from: anchor)
+                    if self.path == nil {
+                        self.path = MovementPath(points: [coordinate, motion.next(from: anchor)])
+                    }
                 }
+                if var path = self.path {
+                    let elapsed = min(2, max(0, now - (self.movementUptime ?? now)))
+                    coordinate = path.advance(metres: self.pathSpeed * elapsed) ?? coordinate
+                    self.path = path.finished ? nil : path
+                    if path.finished && self.routeMode {
+                        self.movementActive = false
+                        self.motionSummary = "Route complete - holding location"
+                    }
+                }
+                self.movementUptime = now
                 let destination = coordinate
                 self.busy = true
                 do { try await AccessManager.shared.requireAccess() }
@@ -289,6 +322,7 @@ final class SessionModel: ObservableObject {
         realLocationReceived = false
         restoring = true
         motion = nil
+        path = nil; routeMode = false; movementActive = false
         motionAnchor = nil
         motionSummary = "Fixed location"
         stopLoop()
@@ -320,6 +354,13 @@ final class SessionModel: ObservableObject {
         } catch { operationFailed(error) }
     }
 
+    func retryRestoreCheck() {
+        guard canConfirmRestored else { return }
+        awaitingRestoreReading = true
+        status = "Finding your real location..."
+        restoreCompleted?()
+    }
+
     func restorationReading(simulated: Bool?) {
         guard unresolved, !refreshing, lastSent == nil else { return }
         if simulated == false {
@@ -330,7 +371,7 @@ final class SessionModel: ObservableObject {
         if simulated == true {
             status = "iOS still reports a simulated location. Try Restore again."
         } else {
-            status = simulated == false ? "Fresh non-simulated location received. Check Maps to confirm; addresses may refresh later." : "Fresh location received. Check Maps to confirm."
+            status = simulated == false ? "Real location received and shown on the map. Other apps and address labels may update later." : "Fresh location received. Check Maps to confirm."
         }
     }
 
@@ -351,6 +392,7 @@ final class SessionModel: ObservableObject {
 
     func enteredBackground() {
         foreground = false
+        movementUptime = ProcessInfo.processInfo.systemUptime
         if connected { sessionNeedsCheck = true }
         if refreshing && backgroundUpdatesAllowed {
             status = "Background updates requested. Verify location after locking."
@@ -363,6 +405,7 @@ final class SessionModel: ObservableObject {
     func enteredForeground() {
         let returningFromBackground = !foreground
         foreground = true
+        movementUptime = ProcessInfo.processInfo.systemUptime
         pairingAvailable = PairingStore.isAvailable
         // A successful refresh before suspension does not prove the tunnel
         // survived it. The next successful command clears this flag.

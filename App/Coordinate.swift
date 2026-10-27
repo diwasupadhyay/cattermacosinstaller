@@ -59,3 +59,40 @@ struct RandomMotion {
         destination(from: anchor, distance: Double.random(in: minimum...maximum), bearing: Double.random(in: 0..<(2 * .pi)))
     }
 }
+
+/// Progress advances only while commands are processed, not across suspension.
+struct MovementPath {
+    let points: [Coordinate]
+    var index = 0
+    var travelled = 0.0
+    var finished: Bool { points.count < 2 || index >= points.count - 1 }
+
+    static func distance(_ a: Coordinate, _ b: Coordinate) -> Double {
+        let p = Double.pi / 180
+        let h = pow(sin((b.latitude-a.latitude)*p/2), 2) + cos(a.latitude*p)*cos(b.latitude*p)*pow(sin((b.longitude-a.longitude)*p/2), 2)
+        return 12_742_000 * asin(sqrt(min(1, max(0, h))))
+    }
+
+    mutating func advance(metres: Double) -> Coordinate? {
+        guard !points.isEmpty else { return nil }
+        var remaining = metres.isFinite ? max(0, metres) : 0
+        while !finished {
+            let a = points[index], b = points[index+1]
+            let length = Self.distance(a,b)
+            if length <= travelled + remaining {
+                remaining -= max(0, length-travelled)
+                index += 1; travelled = 0
+                continue
+            }
+            travelled += remaining
+            let p = Double.pi/180
+            let bearing = atan2(sin((b.longitude-a.longitude)*p)*cos(b.latitude*p), cos(a.latitude*p)*sin(b.latitude*p)-sin(a.latitude*p)*cos(b.latitude*p)*cos((b.longitude-a.longitude)*p))
+            // Same spherical destination calculation as random offsets, without its radius limit.
+            let angular = travelled/6_371_000
+            let latitude = asin(min(1,max(-1,sin(a.latitude*p)*cos(angular)+cos(a.latitude*p)*sin(angular)*cos(bearing))))
+            let longitude = a.longitude*p + atan2(sin(bearing)*sin(angular)*cos(a.latitude*p), cos(angular)-sin(a.latitude*p)*sin(latitude))
+            return try? Coordinate(latitude: latitude/p, longitude: (longitude/p+540).truncatingRemainder(dividingBy: 360)-180)
+        }
+        return points.last
+    }
+}

@@ -48,3 +48,16 @@ for latitude in [-90.0, -45, 0, 45, 90] {
 let invalidMotion = RandomMotion(minimum: .nan, maximum: .infinity, interval: -1)
 precondition(invalidMotion.minimum == 5 && invalidMotion.maximum == 10 && invalidMotion.interval == 15)
 print("Random-motion bounds, poles, date-line and invalid configuration checks passed.")
+
+let origin = try Coordinate(latitude: 0, longitude: 0)
+let endpoint = try Coordinate(latitude: 0, longitude: 0.001)
+var route = MovementPath(points: [origin, origin, endpoint])
+let firstStep = route.advance(metres: 1.4)!
+precondition(abs(MovementPath.distance(origin, firstStep) - 1.4) < 0.01)
+precondition(!route.finished)
+precondition(route.advance(metres: 1000) == endpoint && route.finished)
+precondition(route.advance(metres: 1000) == endpoint)
+var crossing = MovementPath(points: [try Coordinate(latitude: 0, longitude: 179.9999), try Coordinate(latitude: 0, longitude: -179.9999)])
+let mid = crossing.advance(metres: 10)!
+precondition(abs(mid.longitude) > 179.99)
+print("Route interpolation, duplicate pins, completion and date-line checks passed.")
