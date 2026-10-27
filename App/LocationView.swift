@@ -88,40 +88,9 @@ struct LocationView: View {
                         .accessibilityLabel("Settings and setup")
                 }
             }
-            .sheet(isPresented: $showMovement) {
-                NavigationStack {
-                    Form {
-                        Section("Route pins") {
-                            Text("\(routePins.count) pins. Tap the map to add pins in order. Segments are straight lines, not road directions.")
-                            Button(editingRoute ? "Continue placing pins" : "Place pins on map") { editingRoute = true; showMovement = false }
-                                .disabled(model.userActionBusy || model.movementActive)
-                            Button("Undo last pin") { if !routePins.isEmpty { routePins.removeLast() } }.disabled(routePins.isEmpty)
-                            Button("Clear route", role: .destructive) { routePins = [] }.disabled(routePins.isEmpty)
-                            Slider(value: $movementSpeed, in: 0.5...10, step: 0.1)
-                            Text(String(format: "Speed: %.1f m/s (%.1f km/h)", movementSpeed, movementSpeed * 3.6))
-                            Button("Start route") {
-                                pendingRoute = routePins; pendingSpeed = movementSpeed
-                                pendingLocation = routePins.first
-                                editingRoute = false; showMovement = false
-                            }.disabled(routePins.count < 2 || model.userActionBusy || model.movementActive)
-                        }
-                        Section("Random movement") {
-                            NavigationLink("Configure random movement") {
-                                SettingsDetailView(page: .motion, model: model, monitor: monitor, pairing: movementPairing)
-                            }
-                            Text("Enable random movement in its settings, then use Set location. Movement interpolates toward each random target.").font(.caption)
-                        }
-                        Section {
-                            if model.movementActive { Button("Stop movement; hold position") { model.stopMovement() } }
-                            Text("Background movement depends on iOS allowing execution. Restore stops all movement and requests your real location.").font(.caption)
-                        }
-                    }.navigationTitle("Movement").navigationBarTitleDisplayMode(.inline)
-                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showMovement = false } } }
-                }
-            }
-            .onChange(of: showMovement) { _, visible in
-                if !visible && !pendingRoute.isEmpty { confirmChange = true }
-            }
+            .sheet(isPresented: $showMovement, onDismiss: {
+                if !pendingRoute.isEmpty { confirmChange = true }
+            }) { movementSheet }
             .sheet(isPresented: $showDetails) {
                 NavigationStack {
                     List {
@@ -230,6 +199,38 @@ struct LocationView: View {
         Button(library.contains(selected) ? "Saved" : "Save place", systemImage: "bookmark") {
             searchFocused = false; placeName = selectedName; savePlace = true
         }.buttonStyle(.bordered).controlSize(.large).disabled(library.contains(selected))
+    }
+
+    private var movementSheet: some View {
+                NavigationStack {
+                    Form {
+                        Section("Route pins") {
+                            Text("\(routePins.count) pins. Tap the map to add pins in order. Segments are straight lines, not road directions.")
+                            Button(editingRoute ? "Continue placing pins" : "Place pins on map") { editingRoute = true; showMovement = false }
+                                .disabled(model.userActionBusy || model.movementActive)
+                            Button("Undo last pin") { if !routePins.isEmpty { routePins.removeLast() } }.disabled(routePins.isEmpty || model.movementActive)
+                            Button("Clear route", role: .destructive) { routePins = [] }.disabled(routePins.isEmpty || model.movementActive)
+                            Slider(value: $movementSpeed, in: 0.5...10, step: 0.1)
+                            Text(String(format: "Speed: %.1f m/s (%.1f km/h)", movementSpeed, movementSpeed * 3.6))
+                            Button("Start route") {
+                                pendingRoute = routePins; pendingSpeed = movementSpeed
+                                pendingLocation = routePins.first
+                                editingRoute = false; showMovement = false
+                            }.disabled(routePins.count < 2 || model.userActionBusy || model.movementActive)
+                        }
+                        Section("Random movement") {
+                            NavigationLink("Configure random movement") {
+                                SettingsDetailView(page: .motion, model: model, monitor: monitor, pairing: movementPairing)
+                            }
+                            Text("Enable random movement in its settings, then use Set location. Movement interpolates toward each random target.").font(.caption)
+                        }
+                        Section {
+                            if model.movementActive { Button("Stop movement; hold position") { model.stopMovement() } }
+                            Text("Background movement depends on iOS allowing execution. Restore stops all movement and requests your real location.").font(.caption)
+                        }
+                    }.navigationTitle("Movement").navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showMovement = false } } }
+                }
     }
 
     private var restoreCard: some View {
