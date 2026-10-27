@@ -22,6 +22,8 @@ jobs:
           mkdir -p build
           swiftc App/Coordinate.swift App/Transport/AssetIntegrity.swift Tests/main.swift -o build/coordinate-tests
           build/coordinate-tests
+          swiftc -parse-as-library App/Coordinate.swift App/RouteLibrary.swift Tests/RouteLibraryChecks.swift -o build/route-library-tests
+          build/route-library-tests
           swiftc -parse-as-library App/Coordinate.swift App/SessionModel.swift Tests/SessionChecks.swift -o build/session-tests
           build/session-tests
           swiftc -parse-as-library App/UpdateManager.swift App/SigningStatus.swift Tests/UpdateChecks.swift -o build/update-tests

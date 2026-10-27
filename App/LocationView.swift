@@ -6,9 +6,9 @@ extension Coordinate {
 }
 
 private enum MovementMode: String, CaseIterable {
-    case normal = "Normal", random = "Random", route = "Route"
+    case normal = "Location", route = "Route"
     var action: String {
-        switch self { case .normal: return "Set location"; case .random: return "Start random movement"; case .route: return "Start route" }
+        switch self { case .normal: return "Set location"; case .route: return "Start route" }
     }
 }
 
@@ -23,6 +23,15 @@ struct LocationView: View {
     @State private var showDetails = false
     @State private var showMovement = false
     @State private var editingRoute = false
+    @State private var randomMovement = false
+    @State private var pendingRandom = false
+    @StateObject private var routes = RouteLibrary()
+    @State private var routeName = "New route"
+    @State private var namingRoute = false
+    @State private var renameID: UUID?
+    @State private var deletingRoute: SavedRoute?
+    @State private var clearRoute = false
+    @AppStorage("motionMaximum") private var motionRadius = 10.0
     @State private var movementMode: MovementMode = .normal
     @State private var loopRoute = false
     @State private var pendingLoop = false
@@ -33,7 +42,6 @@ struct LocationView: View {
     @State private var pendingSpeed = 1.4
     @StateObject private var movementPairing = OnDevicePairing()
 
-    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var savePlace = false
     @State private var placeName = ""
     @State private var selectedName = "Pinned location"
@@ -52,39 +60,17 @@ struct LocationView: View {
 
     var body: some View {
         NavigationStack {
-            GeometryReader { geometry in
-                map
-                    .safeAreaInset(edge: .top, spacing: 0) {
-                        VStack(spacing: 10) {
-                            searchField
-                            TimelineView(.periodic(from: .now, by: 1)) { _ in compactStatus }
-                            if let searchError { Text(searchError).font(.caption).foregroundStyle(.red).padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10)) }
-                            if !results.isEmpty {
-                                ScrollView { searchResults }
-                                    .frame(maxHeight: geometry.size.height * 0.3)
-                            }
-                        }.padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 12)
-                    }
-                    .safeAreaInset(edge: .bottom, spacing: 0) {
-                        VStack(spacing: 0) {
-                            Capsule().fill(.secondary.opacity(0.35)).frame(width: 36, height: 4).padding(.top, 10)
-                                .accessibilityHidden(true)
-                            ScrollView {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    if model.awaitingRestoreReading || model.realLocationReceived || model.canConfirmRestored {
-                                        restoreCard
-                                    } else {
-                                        selectionCard
-                                    }
-                                    if let error = library.error { Text(error).font(.caption).foregroundStyle(.red) }
-                                }.padding(.horizontal, 16).padding(.top, 10)
-                            }.frame(maxHeight: typeSize.isAccessibilitySize ? geometry.size.height * 0.4 : 180)
-                                .scrollDismissesKeyboard(.interactively)
-                            actions
-                        }
-                        .background(.regularMaterial, in: UnevenRoundedRectangle(topLeadingRadius: 24, topTrailingRadius: 24))
-                    }
-            }
+            map
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    VStack(spacing: 8) {
+                        searchField
+                        if let searchError { Text(searchError).font(.caption).foregroundStyle(.red).padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10)) }
+                        if !results.isEmpty { ScrollView { searchResults }.frame(maxHeight: 220) }
+                    }.padding(.horizontal, 16).padding(.vertical, 8)
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if !searchFocused { actions }
+                }
             .background(CatterTheme.background)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -100,6 +86,12 @@ struct LocationView: View {
                 }
             }
             .sheet(isPresented: $showMovement) { movementSheet }
+            .fullScreenCover(isPresented: $editingRoute) {
+                RouteEditorView(points: routePins, repeats: loopRoute, anchor: model.selected) { points, repeats in
+                    routePins = points; loopRoute = repeats
+                    camera = .automatic
+                }
+            }
             .sheet(isPresented: $showDetails) {
                 NavigationStack {
                     List {
@@ -111,6 +103,14 @@ struct LocationView: View {
                             }
                             if let date = model.lastCommandAt { LabeledContent("Last command", value: date.formatted(date: .omitted, time: .standard)) }
                         }
+                        if model.awaitingRestoreReading || model.realLocationReceived || model.canConfirmRestored {
+                            Section("Restore") { restoreCard }
+                        }
+                        Section("Destination") {
+                            Text(selectedName)
+                            if let selected = model.selected { Text(String(format: "%.5f, %.5f", selected.latitude, selected.longitude)).monospacedDigit().textSelection(.enabled) }
+                        }
+                        if let error = library.error { Section { Text(error).foregroundStyle(.red) } }
                         Section("Background updates") {
                             Text(monitor.message)
                             Text("Keep LocalDevVPN connected. iOS can pause background execution; a successful command confirms the connection at that time.")
@@ -121,7 +121,7 @@ struct LocationView: View {
                         }
                         Section {
                             if model.failure != nil && model.pairingAvailable {
-                                Button("Reconnect") { Task { await model.connect() } }.disabled(model.busy)
+                                Button("Reconnect") { Task { await model.connect() } }.disabled(model.userActionBusy)
                             }
                             Button("Connection settings") { showDetails = false; openSettings() }
                         }
@@ -141,11 +141,11 @@ struct LocationView: View {
                 }.presentationDetents([.medium, .large])
             }
             .confirmationDialog("Change this iPhone's location?", isPresented: $confirmChange, titleVisibility: .visible) {
-                Button(pendingMode.action) {
+                Button(pendingRandom ? "Set & move" : pendingMode.action) {
                     guard let coordinate = pendingLocation else { return }
                     model.select(coordinate)
                     let name = selectedName
-                    let route = pendingRoute, speed = pendingSpeed, repeats = pendingLoop, random = pendingMode == .random
+                    let route = pendingRoute, speed = pendingSpeed, repeats = pendingLoop, random = pendingRandom
                     Task {
                         model.locationSent = { sent in library.record(sent, name: name) }
                         await model.start(route: route, speed: speed, repeatRoute: repeats, random: random)
@@ -177,75 +177,91 @@ struct LocationView: View {
         }
     }
 
-    private var selectionCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("Selected destination", systemImage: "mappin.and.ellipse")
-                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            if let selected = model.selected {
-                Text(selectedName).font(.headline).fixedSize(horizontal: false, vertical: true)
-                Text(String(format: "%.5f, %.5f", selected.latitude, selected.longitude))
-                    .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary).textSelection(.enabled)
-                if let sent = model.lastSent, sent != selected, !model.movementActive {
-                    Label("Selection has not been applied", systemImage: "info.circle")
-                        .font(.caption).foregroundStyle(.orange)
-                }
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) { selectionTools(selected) }
-                    VStack(alignment: .leading, spacing: 8) { selectionTools(selected) }
-                }
-            } else {
-                Text("Search for a place or tap the map.").font(.subheadline).foregroundStyle(.secondary)
-                Button("Enter coordinates", systemImage: "number") { searchFocused = false; coordinates = true }
-                    .buttonStyle(.bordered).controlSize(.large)
-            }
-        }.frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16).background(CatterTheme.surface, in: RoundedRectangle(cornerRadius: CatterTheme.cornerRadius))
-    }
-
-    @ViewBuilder private func selectionTools(_ selected: Coordinate) -> some View {
-        Button("Coordinates", systemImage: "number") { searchFocused = false; coordinates = true }
-            .buttonStyle(.bordered).controlSize(.large)
-        Button(library.contains(selected) ? "Saved" : "Save place", systemImage: "bookmark") {
-            searchFocused = false; placeName = selectedName; savePlace = true
-        }.buttonStyle(.bordered).controlSize(.large).disabled(library.contains(selected))
-    }
-
     private var movementSheet: some View {
-                NavigationStack {
-                    Form {
-                        Section("Route pins") {
-                            Text("\(routePins.count)/64 pins. Tap the map to add pins in order. Segments are straight lines, not road directions.")
-                            Button(editingRoute ? "Continue placing pins" : "Place pins on map") { movementMode = .route; editingRoute = true; showMovement = false }
-                                .disabled(model.userActionBusy || model.movementActive)
-                            Button("Undo last pin") { if !routePins.isEmpty { routePins.removeLast() } }.disabled(routePins.isEmpty || model.movementActive)
-                            Button("Clear route", role: .destructive) { routePins = [] }.disabled(routePins.isEmpty || model.movementActive)
-                            Toggle("Loop back to first pin", isOn: $loopRoute)
-                                .disabled(model.movementActive)
-                            Text("Start the route with the main button on the map. Loop connects the last pin to the first and repeats until you stop it.").font(.caption)
-                        }
-                        Section("Speed") {
+        NavigationStack {
+            Form {
+                if movementMode == .route {
+                    Section("Current route") {
+                        LabeledContent("Pins", value: "\(routePins.count) / 64")
+                        Toggle("Loop back to the start", isOn: $loopRoute)
+                            .disabled(model.movementActive)
+                        Button("Save route", systemImage: "bookmark") {
+                            renameID = nil; routeName = "New route"; namingRoute = true
+                        }.disabled(routePins.count < 2)
+                        Button("Clear current route", role: .destructive) { clearRoute = true }
+                            .disabled(routePins.isEmpty || model.movementActive)
+                    }
+                    Section("Speed") {
+                        HStack {
+                            speedPreset("Walk", speed: 1.4)
+                            speedPreset("Run", speed: 3)
+                            speedPreset("Car", speed: 13.9)
+                        }.buttonStyle(.bordered)
+                        Slider(value: $movementSpeed, in: 0.5...35, step: 0.1).accessibilityLabel("Route speed")
+                        Text(String(format: "%.1f km/h", movementSpeed * 3.6)).monospacedDigit()
+                        Text("Straight lines between pins, not road directions. Changes apply on the next start.").font(.caption).foregroundStyle(.secondary)
+                    }.disabled(model.movementActive)
+                    Section("Saved routes") {
+                        if routes.saved.isEmpty { Text("Save a route to use it again later.").foregroundStyle(.secondary) }
+                        ForEach(routes.saved) { route in
                             HStack {
-                                Button("Walk") { movementSpeed = 1.4 }
-                                Button("Run") { movementSpeed = 3 }
-                                Button("Car") { movementSpeed = 13.9 }
-                            }.buttonStyle(.bordered)
-                            Slider(value: $movementSpeed, in: 0.5...35, step: 0.1).accessibilityLabel("Movement speed")
-                            Text(String(format: "Custom speed: %.1f km/h", movementSpeed * 3.6))
-                            Text("Car is a speed preset only. Routes still follow straight lines between pins. Changes apply on your next start.").font(.caption).foregroundStyle(.secondary)
-                        }
-                        Section("Random movement") {
-                            NavigationLink("Configure random movement") {
-                                SettingsDetailView(page: .motion, model: model, monitor: monitor, pairing: movementPairing)
+                                Button {
+                                    routePins = route.coordinates; loopRoute = route.repeats; movementSpeed = route.speed
+                                    showMovement = false; camera = .automatic
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(route.name).font(.headline)
+                                        Text("\(route.points.count) pins" + (route.repeats ? " - Loop" : "") + String(format: " - %.1f km/h", route.speed * 3.6))
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }.frame(maxWidth: .infinity, alignment: .leading)
+                                }.disabled(model.movementActive)
+                                Menu {
+                                    Button("Rename", systemImage: "pencil") { renameID = route.id; routeName = route.name; namingRoute = true }
+                                    Button("Delete", systemImage: "trash", role: .destructive) { deletingRoute = route }
+                                } label: { Image(systemName: "ellipsis.circle").frame(width: 44, height: 44) }
+                                    .accessibilityLabel("Options for \(route.name)")
                             }
-                            Text("Choose Random on the map, adjust the range here, then tap Start random movement.").font(.caption)
                         }
-                        Section {
-                            if model.movementActive { Button("Stop movement; hold position") { model.stopMovement() } }
-                            Text("Background movement depends on iOS allowing execution. Restore stops all movement and requests your real location.").font(.caption)
+                        if let error = routes.error { Text(error).foregroundStyle(.red) }
+                    }
+                } else {
+                    Section {
+                        NavigationLink("Movement area and timing") {
+                            SettingsDetailView(page: .motion, model: model, monitor: monitor, pairing: movementPairing)
                         }
-                    }.navigationTitle("Movement").navigationBarTitleDisplayMode(.inline)
-                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showMovement = false } } }
+                        Text("Walk around the selected place within your chosen radius. For a mall, choose its center and a radius that fits inside it. Movement does not follow indoor paths or avoid walls; use a route for precise paths.")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                        Text("Movement is optional and starts only when you apply the location with Move nearby enabled. Speed is walking pace.").font(.caption)
+                    }
                 }
+                Section {
+                    Text("Keep LocalDevVPN connected. iOS can pause movement when the app is in the background or the phone is locked.").font(.caption).foregroundStyle(.secondary)
+                }
+            }.navigationTitle(movementMode == .route ? "Routes" : "Move nearby")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showMovement = false } } }
+            .alert(renameID == nil ? "Save route" : "Rename route", isPresented: $namingRoute) {
+                TextField("Route name", text: $routeName)
+                Button("Save") {
+                    if let id = renameID { routes.rename(id, to: routeName) }
+                    else { routes.save(routePins, name: routeName, repeats: loopRoute, speed: movementSpeed) }
+                    renameID = nil
+                }
+                Button("Cancel", role: .cancel) { renameID = nil }
+            }
+            .confirmationDialog("Delete saved route?", isPresented: Binding(get: { deletingRoute != nil }, set: { if !$0 { deletingRoute = nil } }), titleVisibility: .visible) {
+                Button("Delete route", role: .destructive) { if let route = deletingRoute { routes.remove(route.id) }; deletingRoute = nil }
+                Button("Cancel", role: .cancel) { deletingRoute = nil }
+            }
+            .confirmationDialog("Clear the current route?", isPresented: $clearRoute, titleVisibility: .visible) {
+                Button("Clear pins", role: .destructive) { routePins = []; loopRoute = false }
+            } message: { Text("Saved routes will be kept.") }
+        }
+    }
+
+    private func speedPreset(_ title: String, speed: Double) -> some View {
+        Button { movementSpeed = speed } label: { Text(title).frame(maxWidth: .infinity) }
+            .tint(abs(movementSpeed - speed) < 0.05 ? CatterTheme.accent : .secondary)
     }
 
     private var restoreCard: some View {
@@ -318,69 +334,62 @@ struct LocationView: View {
     }
 
     private var actions: some View {
-        VStack(spacing: 8) {
-            Picker("Movement mode", selection: $movementMode) {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Button { showDetails = true } label: {
+                    Label(model.statusTitle, systemImage: statusSymbol)
+                        .font(.caption.weight(.semibold)).foregroundStyle(statusColor).lineLimit(1)
+                }.buttonStyle(.plain)
+                Spacer(minLength: 0)
+                Menu {
+                    Button("Enter coordinates", systemImage: "number") { coordinates = true }
+                    Button("Save place", systemImage: "bookmark") { placeName = selectedName; savePlace = true }.disabled(model.selected == nil)
+                    Button("Session details", systemImage: "info.circle") { showDetails = true }
+                } label: { Image(systemName: "ellipsis.circle").frame(width: 44, height: 32) }.accessibilityLabel("Location options")
+            }
+            Picker("Location mode", selection: $movementMode) {
                 ForEach(MovementMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented).disabled(model.userActionBusy || model.movementActive)
-                .onChange(of: movementMode) { _, value in editingRoute = value == .route && !model.movementActive }
             if movementMode == .route {
                 HStack {
-                    Text("\(routePins.count)/64 pins").font(.caption.monospacedDigit())
-                    Toggle("Loop", isOn: $loopRoute).fixedSize().disabled(model.movementActive)
+                    Button(routePins.isEmpty ? "Create route" : "Edit \(routePins.count) pins", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
+                        searchFocused = false; editingRoute = true
+                    }.disabled(model.userActionBusy || model.movementActive)
                     Spacer()
-                    Button("Undo", systemImage: "arrow.uturn.backward") { if !routePins.isEmpty { routePins.removeLast() } }
-                        .disabled(routePins.isEmpty || model.movementActive)
-                }.font(.caption)
-                Text(editingRoute ? "Tap the map to add pins in order." : "Straight segments between pins.").font(.caption).foregroundStyle(.secondary)
-            }
-            HStack {
-                Button("Movement settings", systemImage: "point.topleft.down.to.point.bottomright.curvepath") { searchFocused = false; showMovement = true }
-                Spacer()
-                if model.movementActive {
-                    Button("Stop movement") { model.stopMovement() }.disabled(model.userActionBusy)
-                } else if movementMode == .route {
-                    Button(editingRoute ? "Finish pins" : "Edit pins") { editingRoute.toggle() }
+                    Button("Routes", systemImage: "folder") { showMovement = true }
+                }.font(.subheadline).frame(minHeight: 36)
+            } else {
+                HStack(spacing: 12) {
+                    Toggle("Move nearby", isOn: $randomMovement).font(.subheadline)
+                        .disabled(model.userActionBusy || model.movementActive)
+                    Button { showMovement = true } label: { Image(systemName: "slider.horizontal.3").frame(width: 44, height: 36) }
+                        .accessibilityLabel("Movement radius and timing")
                 }
-            }.font(.subheadline).buttonStyle(.bordered)
-            Button {
-                searchFocused = false
-                pendingMode = movementMode
-                pendingRoute = movementMode == .route ? routePins : []
-                pendingLoop = loopRoute; pendingSpeed = movementSpeed
-                pendingLocation = movementMode == .route ? routePins.first : model.selected
-                editingRoute = false
-                confirmChange = pendingLocation != nil
-            } label: {
-                Label(model.userActionBusy ? "Working..." : movementMode.action, systemImage: "location.fill")
-            }.buttonStyle(CatterPrimaryButton()).disabled(model.userActionBusy || model.movementActive || (movementMode == .route ? routePins.count < 2 : model.selected == nil))
-            Button {
-                searchFocused = false
-                Task { await model.restore() }
-            } label: {
-                Label(model.restoring ? "Stopping simulation..." : "Restore real location", systemImage: "location.slash")
-                    .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 48)
-                    .background(CatterTheme.surface, in: RoundedRectangle(cornerRadius: 14))
             }
-            .disabled(model.restoring || (model.busy && !model.refreshing) || !model.pairingAvailable)
-        }.padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 8)
-            .background(.ultraThinMaterial)
-    }
-
-    private var compactStatus: some View {
-        Button { searchFocused = false; showDetails = true } label: {
             HStack(spacing: 10) {
-                Image(systemName: statusSymbol).foregroundStyle(statusColor)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(model.statusTitle).font(.subheadline.weight(.semibold))
-                    Text(model.refreshing ? model.motionSummary : "Tap for session details")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 4)
-                if model.restoring || model.awaitingRestoreReading || (model.busy && !model.refreshing) { ProgressView() }
-                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        }.buttonStyle(.plain).accessibilityHint("Show connection status and troubleshooting details")
+                Button {
+                    if model.movementActive { model.stopMovement(); return }
+                    searchFocused = false; pendingMode = movementMode
+                    pendingRoute = movementMode == .route ? routePins : []
+                    pendingLoop = loopRoute
+                    pendingRandom = movementMode == .normal && randomMovement
+                    pendingSpeed = pendingRandom ? 1.4 : movementSpeed
+                    pendingLocation = movementMode == .route ? routePins.first : model.selected
+                    confirmChange = pendingLocation != nil
+                } label: {
+                    Label(model.userActionBusy ? "Working..." : model.movementActive ? "Stop moving" : movementMode == .normal && randomMovement ? "Set & move" : movementMode.action,
+                          systemImage: model.movementActive ? "pause.fill" : "location.fill")
+                        .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 48)
+                }.buttonStyle(.borderedProminent)
+                    .disabled(model.userActionBusy || (!model.movementActive && (movementMode == .route ? routePins.count < 2 : model.selected == nil)))
+                Button { Task { await model.restore() } } label: {
+                    Label(model.restoring ? "Restoring" : "Restore", systemImage: "location.slash")
+                        .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 48)
+                }.buttonStyle(.bordered)
+                    .disabled(model.restoring || model.userActionBusy || !model.pairingAvailable)
+            }.controlSize(.small)
+        }.padding(.horizontal, 16).padding(.vertical, 12)
+            .background(.regularMaterial, in: UnevenRoundedRectangle(topLeadingRadius: 22, topTrailingRadius: 22))
     }
 
     private var statusSymbol: String {
@@ -410,6 +419,10 @@ struct LocationView: View {
                         Image(systemName: "location.circle.fill").font(.title).foregroundStyle(.blue).background(.white, in: Circle())
                     }
                 }
+                if movementMode == .normal, randomMovement, let selected = model.selected {
+                    MapCircle(center: selected.mapCoordinate, radius: min(100, max(0, motionRadius)))
+                        .foregroundStyle(.blue.opacity(0.12)).stroke(.blue.opacity(0.5), lineWidth: 1)
+                }
                 if let selected = model.selected { Marker("Selected", coordinate: selected.mapCoordinate).tint(CatterTheme.accent) }
                 if let sent = model.lastSent, sent != model.selected {
                     Marker("Last sent", systemImage: "paperplane.fill", coordinate: sent.mapCoordinate).tint(.orange)
@@ -419,9 +432,7 @@ struct LocationView: View {
             .mapControls { MapCompass(); MapScaleView() }
             .onTapGesture { point in
                 if let coordinate = proxy.convert(point, from: .local) {
-                    if editingRoute {
-                        if routePins.count < 64, let pin = try? Coordinate(latitude: coordinate.latitude, longitude: coordinate.longitude) { routePins.append(pin) }
-                    } else { choose(coordinate, recenter: false) }
+                    if movementMode == .normal { choose(coordinate, recenter: false) }
                 }
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)

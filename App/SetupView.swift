@@ -91,14 +91,16 @@ struct SettingsDetailView: View {
                         Text("Choose a new point around the location you set. Movements stay inside this range from that original point.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    Section("Movement range") {
+                    Section("Area around your pin") {
                         Stepper("Minimum: \(Int(motionMinimum)) metres", value: $motionMinimum, in: 0...motionMaximum)
                         Stepper("Maximum: \(Int(motionMaximum)) metres", value: $motionMaximum, in: motionMinimum...100)
-                        Stepper("Every \(Int(motionInterval)) seconds", value: $motionInterval, in: 15...3600, step: 15)
-                        Button("Use 5-10 m every minute") { motionMinimum = 5; motionMaximum = 10; motionInterval = 60 }
+                        Stepper("New destination every \(Int(motionInterval)) seconds", value: $motionInterval, in: 15...3600, step: 15)
+                        Button("Small area: 5-10 m, every minute") { motionMinimum = 5; motionMaximum = 10; motionInterval = 60 }
+                        Button("Larger area: within 40 m, every 30 seconds") { motionMinimum = 0; motionMaximum = 40; motionInterval = 30 }
+                        Text("Targets are measured from the pin. Catter walks between them at about 5 km/h. It does not detect buildings, walls or indoor paths.").font(.caption).foregroundStyle(.secondary)
                     }
                     Section("How it works") {
-                        Text("Choose Random on the map, then tap Start random movement. Normal always holds a fixed location. Restore stops both movement and simulation.")
+                        Text("Enable Move nearby on the Location tab, then tap Set & move. Leave Move nearby off to hold a fixed location. Restore stops both movement and simulation.")
                         Text("Turn on Background location updates in Connection to request movement while locked. iOS may pause the app; missed movements are skipped, and timing is approximate.")
                         Text(model.motionSummary).font(.caption).foregroundStyle(.secondary)
                     }
