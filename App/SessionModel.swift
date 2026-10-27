@@ -169,6 +169,8 @@ final class SessionModel: ObservableObject {
 
     private func operationFailed(_ error: Error) {
         stopLoop()
+        movementActive = false
+        motion = nil; path = nil; routeMode = false
         awaitingRestoreReading = false
         connected = false
         failure = error.localizedDescription
@@ -176,7 +178,7 @@ final class SessionModel: ObservableObject {
         status = unresolved ? "Connection interrupted. Location may still be simulated." : "Could not connect — check Settings"
     }
 
-    func start(route: [Coordinate] = [], speed: Double = 1.4) async {
+    func start(route: [Coordinate] = [], speed: Double = 1.4, repeatRoute: Bool = false, random: Bool? = nil) async {
         guard !busy || refreshing else { return }
         guard installationInProgress?() != true else {
             failure = "Catter is renewing. Wait until renewal finishes before changing location."
@@ -212,17 +214,17 @@ final class SessionModel: ObservableObject {
             lastSent = coordinate
             motionAnchor = coordinate
             let defaults = UserDefaults.standard
-            motion = defaults.bool(forKey: "motionEnabled") ? RandomMotion(
+            motion = (random ?? defaults.bool(forKey: "motionEnabled")) ? RandomMotion(
                 minimum: defaults.object(forKey: "motionMinimum") as? Double ?? 5,
                 maximum: defaults.object(forKey: "motionMaximum") as? Double ?? 10,
                 interval: defaults.object(forKey: "motionInterval") as? Double ?? 60) : nil
-            path = route.count >= 2 ? MovementPath(points: route) : nil
+            path = route.count >= 2 ? MovementPath(points: route, repeats: repeatRoute) : nil
             routeMode = path != nil
-            pathSpeed = speed.isFinite ? min(10, max(0.5, speed)) : 1.4
+            pathSpeed = speed.isFinite ? min(35, max(0.5, speed)) : 1.4
             movementUptime = ProcessInfo.processInfo.systemUptime
             if routeMode { motion = nil }
             movementActive = routeMode || motion != nil
-            if routeMode { motionSummary = "Following route" }
+            if routeMode { motionSummary = repeatRoute ? "Looping route" : "Following route" }
             else if let motion {
                 motionSummary = "Random motion: \(Int(motion.minimum))-\(Int(motion.maximum)) m every \(Int(motion.interval)) s"
                 nextMotionUptime = ProcessInfo.processInfo.systemUptime + motion.interval
@@ -277,6 +279,8 @@ final class SessionModel: ObservableObject {
                         return
                     }
                     self.stopLoop()
+                    self.movementActive = false
+                    self.motion = nil; self.path = nil; self.routeMode = false
                     self.busy = false
                     self.failure = error.localizedDescription
                     self.status = "Location updates stopped. Restore remains available."

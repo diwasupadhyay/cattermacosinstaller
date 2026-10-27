@@ -63,6 +63,13 @@ struct RandomMotion {
 /// Progress advances only while commands are processed, not across suspension.
 struct MovementPath {
     let points: [Coordinate]
+    let repeats: Bool
+    init(points: [Coordinate], repeats: Bool = false) {
+        var vertices = points
+        if repeats, vertices.count > 1, vertices.first != vertices.last { vertices.append(vertices[0]) }
+        self.points = vertices
+        self.repeats = repeats && zip(vertices, vertices.dropFirst()).contains { Self.distance($0.0, $0.1) > 0.01 }
+    }
     var index = 0
     var travelled = 0.0
     var finished: Bool { points.count < 2 || index >= points.count - 1 }
@@ -76,12 +83,17 @@ struct MovementPath {
     mutating func advance(metres: Double) -> Coordinate? {
         guard !points.isEmpty else { return nil }
         var remaining = metres.isFinite ? max(0, metres) : 0
+        if repeats {
+            let perimeter = zip(points, points.dropFirst()).reduce(0.0) { $0 + Self.distance($1.0, $1.1) }
+            if perimeter > 0 { remaining = remaining.truncatingRemainder(dividingBy: perimeter) }
+        }
         while !finished {
             let a = points[index], b = points[index+1]
             let length = Self.distance(a,b)
             if length <= travelled + remaining {
                 remaining -= max(0, length-travelled)
                 index += 1; travelled = 0
+                if repeats && index == points.count - 1 { index = 0 }
                 continue
             }
             travelled += remaining

@@ -5,6 +5,13 @@ extension Coordinate {
     var mapCoordinate: CLLocationCoordinate2D { .init(latitude: latitude, longitude: longitude) }
 }
 
+private enum MovementMode: String, CaseIterable {
+    case normal = "Normal", random = "Random", route = "Route"
+    var action: String {
+        switch self { case .normal: return "Set location"; case .random: return "Start random movement"; case .route: return "Start route" }
+    }
+}
+
 @MainActor
 struct LocationView: View {
     @ObservedObject var model: SessionModel
@@ -16,6 +23,10 @@ struct LocationView: View {
     @State private var showDetails = false
     @State private var showMovement = false
     @State private var editingRoute = false
+    @State private var movementMode: MovementMode = .normal
+    @State private var loopRoute = false
+    @State private var pendingLoop = false
+    @State private var pendingMode: MovementMode = .normal
     @State private var routePins: [Coordinate] = []
     @State private var pendingRoute: [Coordinate] = []
     @State private var movementSpeed = 1.4
@@ -88,9 +99,7 @@ struct LocationView: View {
                         .accessibilityLabel("Settings and setup")
                 }
             }
-            .sheet(isPresented: $showMovement, onDismiss: {
-                if !pendingRoute.isEmpty { confirmChange = true }
-            }) { movementSheet }
+            .sheet(isPresented: $showMovement) { movementSheet }
             .sheet(isPresented: $showDetails) {
                 NavigationStack {
                     List {
@@ -132,14 +141,14 @@ struct LocationView: View {
                 }.presentationDetents([.medium, .large])
             }
             .confirmationDialog("Change this iPhone's location?", isPresented: $confirmChange, titleVisibility: .visible) {
-                Button("Set location") {
+                Button(pendingMode.action) {
                     guard let coordinate = pendingLocation else { return }
                     model.select(coordinate)
                     let name = selectedName
-                    let route = pendingRoute, speed = pendingSpeed
+                    let route = pendingRoute, speed = pendingSpeed, repeats = pendingLoop, random = pendingMode == .random
                     Task {
                         model.locationSent = { sent in library.record(sent, name: name) }
-                        await model.start(route: route, speed: speed)
+                        await model.start(route: route, speed: speed, repeatRoute: repeats, random: random)
                         pendingRoute = []
                         model.locationSent = nil
                     }
@@ -176,7 +185,7 @@ struct LocationView: View {
                 Text(selectedName).font(.headline).fixedSize(horizontal: false, vertical: true)
                 Text(String(format: "%.5f, %.5f", selected.latitude, selected.longitude))
                     .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary).textSelection(.enabled)
-                if let sent = model.lastSent, sent != selected {
+                if let sent = model.lastSent, sent != selected, !model.movementActive {
                     Label("Selection has not been applied", systemImage: "info.circle")
                         .font(.caption).foregroundStyle(.orange)
                 }
@@ -205,24 +214,30 @@ struct LocationView: View {
                 NavigationStack {
                     Form {
                         Section("Route pins") {
-                            Text("\(routePins.count) pins. Tap the map to add pins in order. Segments are straight lines, not road directions.")
-                            Button(editingRoute ? "Continue placing pins" : "Place pins on map") { editingRoute = true; showMovement = false }
+                            Text("\(routePins.count)/64 pins. Tap the map to add pins in order. Segments are straight lines, not road directions.")
+                            Button(editingRoute ? "Continue placing pins" : "Place pins on map") { movementMode = .route; editingRoute = true; showMovement = false }
                                 .disabled(model.userActionBusy || model.movementActive)
                             Button("Undo last pin") { if !routePins.isEmpty { routePins.removeLast() } }.disabled(routePins.isEmpty || model.movementActive)
                             Button("Clear route", role: .destructive) { routePins = [] }.disabled(routePins.isEmpty || model.movementActive)
-                            Slider(value: $movementSpeed, in: 0.5...10, step: 0.1)
-                            Text(String(format: "Speed: %.1f m/s (%.1f km/h)", movementSpeed, movementSpeed * 3.6))
-                            Button("Start route") {
-                                pendingRoute = routePins; pendingSpeed = movementSpeed
-                                pendingLocation = routePins.first
-                                editingRoute = false; showMovement = false
-                            }.disabled(routePins.count < 2 || model.userActionBusy || model.movementActive)
+                            Toggle("Loop back to first pin", isOn: $loopRoute)
+                                .disabled(model.movementActive)
+                            Text("Start the route with the main button on the map. Loop connects the last pin to the first and repeats until you stop it.").font(.caption)
+                        }
+                        Section("Speed") {
+                            HStack {
+                                Button("Walk") { movementSpeed = 1.4 }
+                                Button("Run") { movementSpeed = 3 }
+                                Button("Car") { movementSpeed = 13.9 }
+                            }.buttonStyle(.bordered)
+                            Slider(value: $movementSpeed, in: 0.5...35, step: 0.1).accessibilityLabel("Movement speed")
+                            Text(String(format: "Custom speed: %.1f km/h", movementSpeed * 3.6))
+                            Text("Car is a speed preset only. Routes still follow straight lines between pins. Changes apply on your next start.").font(.caption).foregroundStyle(.secondary)
                         }
                         Section("Random movement") {
                             NavigationLink("Configure random movement") {
                                 SettingsDetailView(page: .motion, model: model, monitor: monitor, pairing: movementPairing)
                             }
-                            Text("Enable random movement in its settings, then use Set location. Movement interpolates toward each random target.").font(.caption)
+                            Text("Choose Random on the map, adjust the range here, then tap Start random movement.").font(.caption)
                         }
                         Section {
                             if model.movementActive { Button("Stop movement; hold position") { model.stopMovement() } }
@@ -304,23 +319,40 @@ struct LocationView: View {
 
     private var actions: some View {
         VStack(spacing: 8) {
+            Picker("Movement mode", selection: $movementMode) {
+                ForEach(MovementMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }.pickerStyle(.segmented).disabled(model.userActionBusy || model.movementActive)
+                .onChange(of: movementMode) { _, value in editingRoute = value == .route && !model.movementActive }
+            if movementMode == .route {
+                HStack {
+                    Text("\(routePins.count)/64 pins").font(.caption.monospacedDigit())
+                    Toggle("Loop", isOn: $loopRoute).fixedSize().disabled(model.movementActive)
+                    Spacer()
+                    Button("Undo", systemImage: "arrow.uturn.backward") { if !routePins.isEmpty { routePins.removeLast() } }
+                        .disabled(routePins.isEmpty || model.movementActive)
+                }.font(.caption)
+                Text(editingRoute ? "Tap the map to add pins in order." : "Straight segments between pins.").font(.caption).foregroundStyle(.secondary)
+            }
             HStack {
-                Button("Movement", systemImage: "point.topleft.down.to.point.bottomright.curvepath") { searchFocused = false; showMovement = true }
+                Button("Movement settings", systemImage: "point.topleft.down.to.point.bottomright.curvepath") { searchFocused = false; showMovement = true }
                 Spacer()
                 if model.movementActive {
                     Button("Stop movement") { model.stopMovement() }.disabled(model.userActionBusy)
-                } else if editingRoute {
-                    Button("Done (\(routePins.count) pins)") { editingRoute = false; showMovement = true }
+                } else if movementMode == .route {
+                    Button(editingRoute ? "Finish pins" : "Edit pins") { editingRoute.toggle() }
                 }
             }.font(.subheadline).buttonStyle(.bordered)
             Button {
                 searchFocused = false
-                pendingRoute = []
-                pendingLocation = model.selected
+                pendingMode = movementMode
+                pendingRoute = movementMode == .route ? routePins : []
+                pendingLoop = loopRoute; pendingSpeed = movementSpeed
+                pendingLocation = movementMode == .route ? routePins.first : model.selected
+                editingRoute = false
                 confirmChange = pendingLocation != nil
             } label: {
-                Label(model.busy && !model.refreshing ? "Working..." : "Set location", systemImage: "location.fill")
-            }.buttonStyle(CatterPrimaryButton()).disabled(model.userActionBusy || model.selected == nil)
+                Label(model.userActionBusy ? "Working..." : movementMode.action, systemImage: "location.fill")
+            }.buttonStyle(CatterPrimaryButton()).disabled(model.userActionBusy || model.movementActive || (movementMode == .route ? routePins.count < 2 : model.selected == nil))
             Button {
                 searchFocused = false
                 Task { await model.restore() }
@@ -367,9 +399,11 @@ struct LocationView: View {
     private var map: some View {
         MapReader { proxy in
             Map(position: $camera) {
-                if routePins.count > 1 { MapPolyline(coordinates: routePins.map(\.mapCoordinate)).stroke(.blue, lineWidth: 4) }
-                ForEach(Array(routePins.enumerated()), id: \.offset) { index, point in
-                    Marker("Pin \(index + 1)", coordinate: point.mapCoordinate).tint(.blue)
+                if movementMode == .route && routePins.count > 1 { MapPolyline(coordinates: (loopRoute ? routePins + [routePins[0]] : routePins).map(\.mapCoordinate)).stroke(.blue, lineWidth: 4) }
+                if movementMode == .route {
+                    ForEach(Array(routePins.enumerated()), id: \.offset) { index, point in
+                        Marker("Pin \(index + 1)", coordinate: point.mapCoordinate).tint(.blue)
+                    }
                 }
                 if let real = monitor.restoredCoordinate, model.realLocationReceived {
                     Annotation("Current location", coordinate: real.mapCoordinate) {

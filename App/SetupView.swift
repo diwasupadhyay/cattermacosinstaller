@@ -79,7 +79,6 @@ struct SettingsDetailView: View {
     @ObservedObject private var access = AccessManager.shared
     @ObservedObject private var updates = UpdateManager.shared
     @State private var vpnStorePrompt = false
-    @AppStorage("motionEnabled") private var motionEnabled = false
     @AppStorage("motionMinimum") private var motionMinimum = 5.0
     @AppStorage("motionMaximum") private var motionMaximum = 10.0
     @AppStorage("motionInterval") private var motionInterval = 60.0
@@ -89,7 +88,6 @@ struct SettingsDetailView: View {
         Form {
                 if page == .motion {
                     Section {
-                        Toggle("Random movement", isOn: $motionEnabled)
                         Text("Choose a new point around the location you set. Movements stay inside this range from that original point.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -98,9 +96,9 @@ struct SettingsDetailView: View {
                         Stepper("Maximum: \(Int(motionMaximum)) metres", value: $motionMaximum, in: motionMinimum...100)
                         Stepper("Every \(Int(motionInterval)) seconds", value: $motionInterval, in: 15...3600, step: 15)
                         Button("Use 5-10 m every minute") { motionMinimum = 5; motionMaximum = 10; motionInterval = 60 }
-                    }.disabled(!motionEnabled)
+                    }
                     Section("How it works") {
-                        Text("Changes apply the next time you tap Set location. Restore stops both movement and simulation.")
+                        Text("Choose Random on the map, then tap Start random movement. Normal always holds a fixed location. Restore stops both movement and simulation.")
                         Text("Turn on Background location updates in Connection to request movement while locked. iOS may pause the app; missed movements are skipped, and timing is approximate.")
                         Text(model.motionSummary).font(.caption).foregroundStyle(.secondary)
                     }

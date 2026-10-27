@@ -61,3 +61,14 @@ var crossing = MovementPath(points: [try Coordinate(latitude: 0, longitude: 179.
 let mid = crossing.advance(metres: 10)!
 precondition(abs(mid.longitude) > 179.99)
 print("Route interpolation, duplicate pins, completion and date-line checks passed.")
+
+var looping = MovementPath(points: [origin, endpoint], repeats: true)
+precondition(looping.points.last == origin && looping.repeats)
+let leg = MovementPath.distance(origin, endpoint)
+let returning = looping.advance(metres: leg + 10)!
+precondition(abs(MovementPath.distance(endpoint, returning)-10) < 0.01 && !looping.finished)
+_ = looping.advance(metres: leg * 20)
+precondition(!looping.finished)
+var degenerate = MovementPath(points: [origin, origin], repeats: true)
+precondition(!degenerate.repeats && degenerate.advance(metres: 1) == origin)
+print("Closed-loop traversal and duplicate-only loop safety passed.")
